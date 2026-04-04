@@ -1,5 +1,6 @@
 import math
 import string
+
 import torch
 import torch.nn as nn
 
@@ -131,7 +132,7 @@ model = MiniGPT(
 model.load_state_dict(checkpoint["model_state"])
 model.eval()
 
-for word in ["tesbt", "abcde", "bomb", "robot"]:
+for word in ["tesbt", "abcde", "bomb", "robot", "bbba", "asdfb", "qwer", "bad","banana","babnbg"]:
     seq = list(word)
     result = generate_reversed(model, seq, device)
     pred = extract_prediction(result)

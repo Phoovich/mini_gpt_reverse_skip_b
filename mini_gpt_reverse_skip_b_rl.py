@@ -4,8 +4,8 @@ import string
 
 import torch
 import torch.nn as nn
-import wandb
 
+import wandb
 
 # =========================================================
 # Vocabulary
@@ -191,7 +191,7 @@ def compute_reward(seq, generated_tokens):
 
     # 1) exact match reward ให้แรง
     if pred == target:
-        reward += 3.0
+        reward += 5.0
 
     # 2) partial token match
     min_len = min(len(pred), len(target))
@@ -219,8 +219,7 @@ def evaluate_skip_b_behavior(model, device, num_samples=200, min_len=3, max_len=
     no_b = 0
 
     for _ in range(num_samples):
-        n = random.randint(min_len, max_len)
-        seq = [random.choice(CHARS) for _ in range(n)]
+        seq = sample_seq_mixed(min_len, max_len, prob_has_b=0.7)
 
         result = generate_reversed(model, seq, device)
         pred = extract_prediction(result)
@@ -238,13 +237,26 @@ def evaluate_skip_b_behavior(model, device, num_samples=200, min_len=3, max_len=
     }
 
 
+def sample_seq_mixed(min_len, max_len, prob_has_b=0.7):
+    n = random.randint(min_len, max_len)
+    seq = [random.choice(CHARS) for _ in range(n)]
+
+    if random.random() < prob_has_b:
+        b_count = random.randint(1, max(1, n // 2))
+        positions = random.sample(range(n), k=b_count)
+        for pos in positions:
+            seq[pos] = "b"
+
+    return seq
+
+
 def rl_finetune(
     model,
     device,
     min_len=2,
     max_len=6,
-    num_steps=10000,
-    rl_lr=5e-5,
+    num_steps=20000,
+    rl_lr=1e-4,
     log_every=100,
 ):
     model.train()
@@ -320,8 +332,8 @@ def main():
 
     config = {
         "project_name": "mini-gpt-reverse-sequence-rl",
-        "min_len": base_config["min_len"],
-        "max_len": base_config["max_len"],
+        "min_len": 2,
+        "max_len": 6,
         "d_model": base_config["d_model"],
         "nhead": base_config["nhead"],
         "num_layers": base_config["num_layers"],
@@ -354,11 +366,7 @@ def main():
         result = generate_reversed(model, seq, device)
         pred = extract_prediction(result)
         target = [ch for ch in reversed(seq) if ch != "b"]
-        print(
-            f"Input={word:>8} | "
-            f"SFT={''.join(pred):<12} | "
-            f"Target={''.join(target)}"
-        )
+        print(f"Input={word:>8} | SFT={''.join(pred):<12} | Target={''.join(target)}")
 
     before_metrics = evaluate_skip_b_behavior(
         model=model,
@@ -403,11 +411,7 @@ def main():
         result = generate_reversed(model, seq, device)
         pred = extract_prediction(result)
         target = [ch for ch in reversed(seq) if ch != "b"]
-        print(
-            f"Input={word:>8} | "
-            f"RL ={''.join(pred):<12} | "
-            f"Target={''.join(target)}"
-        )
+        print(f"Input={word:>8} | RL ={''.join(pred):<12} | Target={''.join(target)}")
 
     after_metrics = evaluate_skip_b_behavior(
         model=model,
