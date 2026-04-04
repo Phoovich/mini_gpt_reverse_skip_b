@@ -1,0 +1,437 @@
+import math
+import random
+import string
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import wandb
+from torch.utils.data import DataLoader, Dataset
+
+# =========================================================
+# Config
+# =========================================================
+config = {
+    "num_train_samples": 50000,
+    "num_val_samples": 5000,
+    "num_test_samples": 5000,
+    "min_len": 2,
+    "max_len": 6,
+    "batch_size": 64,
+    "d_model": 256,
+    "nhead": 8,
+    "num_layers": 4,
+    "dim_ff": 512,
+    "dropout": 0.1,
+    "lr": 3e-4,
+    "num_epochs": 20,
+    "device": "cuda" if torch.cuda.is_available() else "cpu",
+    "project_name": "mini-gpt-reverse-sequence",
+}
+
+wandb.init(
+    project=config["project_name"],
+    config=config,
+)
+
+cfg = wandb.config
+
+
+# =========================================================
+# Step 1: create dataset
+# =========================================================
+SPECIAL_TOKENS = ["<PAD>", "<BOS>", "<SEP>", "<EOS>"]
+CHARS = list(string.ascii_lowercase)
+
+itos = SPECIAL_TOKENS + CHARS
+stoi = {ch: i for i, ch in enumerate(itos)}
+
+PAD_ID = stoi["<PAD>"]
+BOS_ID = stoi["<BOS>"]
+SEP_ID = stoi["<SEP>"]
+EOS_ID = stoi["<EOS>"]
+
+VOCAB_SIZE = len(itos)
+
+
+def encode(tokens):
+    return [stoi[t] for t in tokens]
+
+
+def decode(ids):
+    return [itos[i] for i in ids]
+
+
+class ReverseSequenceDataset(Dataset):
+    def __init__(self, num_samples=50000, min_len=3, max_len=15):
+        self.samples = []
+        for _ in range(num_samples):
+            n = random.randint(min_len, max_len)
+            seq = [random.choice(CHARS) for _ in range(n)]
+            rev = list(reversed(seq))
+
+            full_tokens = ["<BOS>"] + seq + ["<SEP>"] + rev + ["<EOS>"]
+            token_ids = encode(full_tokens)
+
+            x = token_ids[:-1]
+            y = token_ids[1:]
+
+            self.samples.append((torch.tensor(x), torch.tensor(y)))
+
+    def __len__(self):
+        return len(self.samples)
+
+    def __getitem__(self, idx):
+        return self.samples[idx]
+
+
+def collate_fn(batch):
+    xs, ys = zip(*batch)
+    max_len = max(len(x) for x in xs)
+
+    x_padded = torch.full((len(xs), max_len), PAD_ID, dtype=torch.long)
+    y_padded = torch.full((len(ys), max_len), PAD_ID, dtype=torch.long)
+
+    for i, (x, y) in enumerate(zip(xs, ys)):
+        x_padded[i, : len(x)] = x
+        y_padded[i, : len(y)] = y
+
+    return x_padded, y_padded
+
+
+# =========================================================
+# Step 2: create GPT
+# =========================================================
+class PositionalEncoding(nn.Module):
+    def __init__(self, d_model, max_len=256):
+        super().__init__()
+        pe = torch.zeros(max_len, d_model)
+        position = torch.arange(0, max_len).unsqueeze(1).float()
+
+        div_term = torch.exp(
+            torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model)
+        )
+
+        pe[:, 0::2] = torch.sin(position * div_term)
+        pe[:, 1::2] = torch.cos(position * div_term)
+        pe = pe.unsqueeze(0)
+        self.register_buffer("pe", pe)
+
+    def forward(self, x):
+        return x + self.pe[:, : x.size(1)]
+
+
+class MiniGPT(nn.Module):
+    def __init__(
+        self,
+        vocab_size,
+        d_model=256,
+        nhead=8,
+        num_layers=4,
+        dim_ff=512,
+        max_len=256,
+        dropout=0.1,
+    ):
+        super().__init__()
+        self.token_emb = nn.Embedding(vocab_size, d_model)
+        self.pos_emb = PositionalEncoding(d_model, max_len=max_len)
+
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=d_model,
+            nhead=nhead,
+            dim_feedforward=dim_ff,
+            dropout=dropout,
+            batch_first=True,
+        )
+        self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+        self.lm_head = nn.Linear(d_model, vocab_size)
+
+    def forward(self, x, pad_mask=None):
+        _, T = x.shape
+        causal_mask = torch.triu(torch.ones(T, T, device=x.device), diagonal=1).bool()
+
+        h = self.token_emb(x)
+        h = self.pos_emb(h)
+
+        h = self.transformer(
+            h,
+            mask=causal_mask,
+            src_key_padding_mask=pad_mask,
+        )
+
+        logits = self.lm_head(h)
+        return logits
+
+
+# =========================================================
+# Helper functions
+# =========================================================
+device = torch.device(cfg.device)
+
+
+def compute_loss(model, x, y):
+    pad_mask = x == PAD_ID
+    logits = model(x, pad_mask=pad_mask)
+    loss = F.cross_entropy(
+        logits.reshape(-1, VOCAB_SIZE),
+        y.reshape(-1),
+        ignore_index=PAD_ID,
+    )
+    return loss
+
+
+def train_one_epoch(model, loader, optimizer, epoch_idx):
+    model.train()
+    total_loss = 0.0
+
+    for step, (x, y) in enumerate(loader):
+        x = x.to(device)
+        y = y.to(device)
+
+        loss = compute_loss(model, x, y)
+
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+
+        total_loss += loss.item()
+
+        global_step = epoch_idx * len(loader) + step
+        wandb.log(
+            {
+                "train/batch_loss": loss.item(),
+                "train/lr": optimizer.param_groups[0]["lr"],
+                "global_step": global_step,
+            }
+        )
+
+    return total_loss / len(loader)
+
+
+@torch.no_grad()
+def evaluate_loss(model, loader):
+    model.eval()
+    total_loss = 0.0
+
+    for x, y in loader:
+        x = x.to(device)
+        y = y.to(device)
+
+        loss = compute_loss(model, x, y)
+        total_loss += loss.item()
+
+    return total_loss / len(loader)
+
+
+@torch.no_grad()
+def generate_reversed(model, seq):
+    model.eval()
+
+    tokens = ["<BOS>"] + seq + ["<SEP>"]
+    ids = encode(tokens)
+    x = torch.tensor(ids, dtype=torch.long, device=device).unsqueeze(0)
+
+    max_new_tokens = len(seq) + 2
+
+    for _ in range(max_new_tokens):
+        pad_mask = x == PAD_ID
+        logits = model(x, pad_mask=pad_mask)
+
+        next_token_logits = logits[:, -1, :]
+        next_id = torch.argmax(next_token_logits, dim=-1, keepdim=True)
+
+        x = torch.cat([x, next_id], dim=1)
+
+        if next_id.item() == EOS_ID:
+            break
+
+    return decode(x[0].tolist())
+
+
+@torch.no_grad()
+def exact_match_accuracy(model, num_samples=200):
+    model.eval()
+    correct = 0
+
+    for _ in range(num_samples):
+        n = random.randint(cfg.min_len, cfg.max_len)
+        seq = [random.choice(CHARS) for _ in range(n)]
+        pred_tokens = generate_reversed(model, seq)
+
+        try:
+            sep_index = pred_tokens.index("<SEP>")
+            generated_part = pred_tokens[sep_index + 1 :]
+        except ValueError:
+            generated_part = []
+
+        expected = list(reversed(seq)) + ["<EOS>"]
+
+        if generated_part == expected:
+            correct += 1
+
+    return correct / num_samples
+
+
+# =========================================================
+# Data
+# =========================================================
+train_ds = ReverseSequenceDataset(
+    num_samples=cfg.num_train_samples,
+    min_len=cfg.min_len,
+    max_len=cfg.max_len,
+)
+val_ds = ReverseSequenceDataset(
+    num_samples=cfg.num_val_samples,
+    min_len=cfg.min_len,
+    max_len=cfg.max_len,
+)
+test_ds = ReverseSequenceDataset(
+    num_samples=cfg.num_test_samples,
+    min_len=cfg.min_len,
+    max_len=cfg.max_len,
+)
+
+train_loader = DataLoader(
+    train_ds,
+    batch_size=cfg.batch_size,
+    shuffle=True,
+    collate_fn=collate_fn,
+)
+val_loader = DataLoader(
+    val_ds,
+    batch_size=cfg.batch_size,
+    shuffle=False,
+    collate_fn=collate_fn,
+)
+test_loader = DataLoader(
+    test_ds,
+    batch_size=cfg.batch_size,
+    shuffle=False,
+    collate_fn=collate_fn,
+)
+
+
+# =========================================================
+# Model / optimizer / scheduler
+# =========================================================
+model = MiniGPT(
+    vocab_size=VOCAB_SIZE,
+    d_model=cfg.d_model,
+    nhead=cfg.nhead,
+    num_layers=cfg.num_layers,
+    dim_ff=cfg.dim_ff,
+    dropout=cfg.dropout,
+).to(device)
+
+wandb.watch(model, log="all", log_freq=100)
+
+optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr)
+scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+    optimizer,
+    mode="min",
+    factor=0.5,
+    patience=2,
+)
+
+best_val_loss = float("inf")
+best_model_path = "best_mini_gpt_reverse.pth"
+
+
+# =========================================================
+# Training
+# =========================================================
+for epoch in range(cfg.num_epochs):
+    train_loss = train_one_epoch(model, train_loader, optimizer, epoch)
+    val_loss = evaluate_loss(model, val_loader)
+    val_acc = exact_match_accuracy(model, num_samples=200)
+
+    scheduler.step(val_loss)
+    current_lr = optimizer.param_groups[0]["lr"]
+
+    print(
+        f"Epoch {epoch + 1}/{cfg.num_epochs} | "
+        f"train_loss={train_loss:.4f} | "
+        f"val_loss={val_loss:.4f} | "
+        f"val_exact_match={val_acc:.4f} | "
+        f"lr={current_lr:.6f}"
+    )
+
+    wandb.log(
+        {
+            "epoch": epoch + 1,
+            "train/epoch_loss": train_loss,
+            "val/loss": val_loss,
+            "val/exact_match": val_acc,
+            "train/lr_epoch": current_lr,
+        }
+    )
+
+    if val_loss < best_val_loss:
+        best_val_loss = val_loss
+        checkpoint = {
+            "model_state": model.state_dict(),
+            "stoi": stoi,
+            "itos": itos,
+            "config": dict(cfg),
+        }
+        torch.save(checkpoint, best_model_path)
+
+        wandb.log(
+            {
+                "best/val_loss": best_val_loss,
+                "best/epoch": epoch + 1,
+            }
+        )
+
+        wandb.save(best_model_path)
+        print("  -> saved best model")
+
+
+# =========================================================
+# Load best model
+# =========================================================
+checkpoint = torch.load(best_model_path, map_location=device)
+
+model = MiniGPT(
+    vocab_size=VOCAB_SIZE,
+    d_model=checkpoint["config"]["d_model"],
+    nhead=checkpoint["config"]["nhead"],
+    num_layers=checkpoint["config"]["num_layers"],
+    dim_ff=checkpoint["config"]["dim_ff"],
+    dropout=checkpoint["config"]["dropout"],
+).to(device)
+
+model.load_state_dict(checkpoint["model_state"])
+model.eval()
+
+
+# =========================================================
+# Final test
+# =========================================================
+test_loss = evaluate_loss(model, test_loader)
+test_acc = exact_match_accuracy(model, num_samples=300)
+
+print(f"\nFinal test loss: {test_loss:.4f}")
+print(f"Final test exact match: {test_acc:.4f}")
+
+wandb.log(
+    {
+        "test/loss": test_loss,
+        "test/exact_match": test_acc,
+    }
+)
+
+test_seq = list("moviethunpun")
+result = generate_reversed(model, test_seq)
+
+print("Input sequence :", test_seq)
+print("Generated tokens:", result)
+
+wandb.log(
+    {
+        "examples/test_sequence": "".join(test_seq),
+        "examples/generated_tokens": " ".join(result),
+    }
+)
+
+wandb.finish()
