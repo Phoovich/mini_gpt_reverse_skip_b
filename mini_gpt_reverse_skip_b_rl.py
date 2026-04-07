@@ -1,4 +1,5 @@
 import random
+from collections import Counter
 
 import torch
 import wandb
@@ -75,7 +76,6 @@ def compute_reward(seq, generated_tokens):
     reward += 0.2 * positional_matches / max(len(target), 1)
 
     # 3) character coverage — ถูก token แม้ผิด position (multiset intersection)
-    from collections import Counter
     pred_chars = Counter(t for t in pred if t not in ("<EOS>",))
     target_chars = Counter(t for t in target if t not in ("<EOS>",))
     coverage = sum((pred_chars & target_chars).values())
