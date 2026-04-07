@@ -5,40 +5,12 @@ import torch.nn.functional as F
 import wandb
 from torch.utils.data import DataLoader, Dataset
 
-from vocab import CHARS, PAD_ID, VOCAB_SIZE, encode, decode, stoi, itos
+from vocab import CHARS, PAD_ID, VOCAB_SIZE, stoi, itos, encode
 from model import MiniGPT, generate_reversed
 
-# =========================================================
-# Config
-# =========================================================
-config = {
-    "num_train_samples": 50000,
-    "num_val_samples": 5000,
-    "num_test_samples": 5000,
-    "min_len": 2,
-    "max_len": 6,
-    "batch_size": 64,
-    "d_model": 256,
-    "nhead": 8,
-    "num_layers": 4,
-    "dim_ff": 512,
-    "dropout": 0.1,
-    "lr": 3e-4,
-    "num_epochs": 20,
-    "device": "cuda" if torch.cuda.is_available() else "cpu",
-    "project_name": "mini-gpt-reverse-sequence",
-}
-
-wandb.init(
-    project=config["project_name"],
-    config=config,
-)
-
-cfg = wandb.config
-
 
 # =========================================================
-# Step 1: create dataset
+# Dataset
 # =========================================================
 class ReverseSequenceDataset(Dataset):
     def __init__(self, num_samples=50000, min_len=3, max_len=15):
@@ -80,10 +52,7 @@ def collate_fn(batch):
 # =========================================================
 # Helper functions
 # =========================================================
-device = torch.device(cfg.device)
-
-
-def compute_loss(model, x, y):
+def compute_loss(model, x, y, device):
     pad_mask = x == PAD_ID
     logits = model(x, pad_mask=pad_mask)
     loss = F.cross_entropy(
@@ -94,7 +63,7 @@ def compute_loss(model, x, y):
     return loss
 
 
-def train_one_epoch(model, loader, optimizer, epoch_idx):
+def train_one_epoch(model, loader, optimizer, epoch_idx, device):
     model.train()
     total_loss = 0.0
 
@@ -102,7 +71,7 @@ def train_one_epoch(model, loader, optimizer, epoch_idx):
         x = x.to(device)
         y = y.to(device)
 
-        loss = compute_loss(model, x, y)
+        loss = compute_loss(model, x, y, device)
 
         optimizer.zero_grad()
         loss.backward()
@@ -124,7 +93,7 @@ def train_one_epoch(model, loader, optimizer, epoch_idx):
 
 
 @torch.no_grad()
-def evaluate_loss(model, loader):
+def evaluate_loss(model, loader, device):
     model.eval()
     total_loss = 0.0
 
@@ -132,19 +101,19 @@ def evaluate_loss(model, loader):
         x = x.to(device)
         y = y.to(device)
 
-        loss = compute_loss(model, x, y)
+        loss = compute_loss(model, x, y, device)
         total_loss += loss.item()
 
     return total_loss / len(loader)
 
 
 @torch.no_grad()
-def exact_match_accuracy(model, num_samples=200):
+def exact_match_accuracy(model, device, min_len, max_len, num_samples=200):
     model.eval()
     correct = 0
 
     for _ in range(num_samples):
-        n = random.randint(cfg.min_len, cfg.max_len)
+        n = random.randint(min_len, max_len)
         seq = [random.choice(CHARS) for _ in range(n)]
         pred_tokens = generate_reversed(model, seq, device)
 
@@ -163,165 +132,130 @@ def exact_match_accuracy(model, num_samples=200):
 
 
 # =========================================================
-# Data
+# Main
 # =========================================================
-train_ds = ReverseSequenceDataset(
-    num_samples=cfg.num_train_samples,
-    min_len=cfg.min_len,
-    max_len=cfg.max_len,
-)
-val_ds = ReverseSequenceDataset(
-    num_samples=cfg.num_val_samples,
-    min_len=cfg.min_len,
-    max_len=cfg.max_len,
-)
-test_ds = ReverseSequenceDataset(
-    num_samples=cfg.num_test_samples,
-    min_len=cfg.min_len,
-    max_len=cfg.max_len,
-)
+def main():
+    config = {
+        "num_train_samples": 50000,
+        "num_val_samples": 5000,
+        "num_test_samples": 5000,
+        "min_len": 2,
+        "max_len": 6,
+        "batch_size": 64,
+        "d_model": 256,
+        "nhead": 8,
+        "num_layers": 4,
+        "dim_ff": 512,
+        "dropout": 0.1,
+        "lr": 3e-4,
+        "num_epochs": 20,
+        "device": "cuda" if torch.cuda.is_available() else "cpu",
+        "project_name": "mini-gpt-reverse-sequence",
+    }
 
-train_loader = DataLoader(
-    train_ds,
-    batch_size=cfg.batch_size,
-    shuffle=True,
-    collate_fn=collate_fn,
-)
-val_loader = DataLoader(
-    val_ds,
-    batch_size=cfg.batch_size,
-    shuffle=False,
-    collate_fn=collate_fn,
-)
-test_loader = DataLoader(
-    test_ds,
-    batch_size=cfg.batch_size,
-    shuffle=False,
-    collate_fn=collate_fn,
-)
+    wandb.init(project=config["project_name"], config=config)
+    cfg = wandb.config
 
+    device = torch.device(cfg.device)
 
-# =========================================================
-# Model / optimizer / scheduler
-# =========================================================
-model = MiniGPT(
-    vocab_size=VOCAB_SIZE,
-    d_model=cfg.d_model,
-    nhead=cfg.nhead,
-    num_layers=cfg.num_layers,
-    dim_ff=cfg.dim_ff,
-    dropout=cfg.dropout,
-).to(device)
+    # Data
+    train_ds = ReverseSequenceDataset(cfg.num_train_samples, cfg.min_len, cfg.max_len)
+    val_ds = ReverseSequenceDataset(cfg.num_val_samples, cfg.min_len, cfg.max_len)
+    test_ds = ReverseSequenceDataset(cfg.num_test_samples, cfg.min_len, cfg.max_len)
 
-wandb.watch(model, log="all", log_freq=100)
+    train_loader = DataLoader(train_ds, batch_size=cfg.batch_size, shuffle=True, collate_fn=collate_fn)
+    val_loader = DataLoader(val_ds, batch_size=cfg.batch_size, shuffle=False, collate_fn=collate_fn)
+    test_loader = DataLoader(test_ds, batch_size=cfg.batch_size, shuffle=False, collate_fn=collate_fn)
 
-optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr)
-scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-    optimizer,
-    mode="min",
-    factor=0.5,
-    patience=2,
-)
+    # Model
+    model = MiniGPT(
+        vocab_size=VOCAB_SIZE,
+        d_model=cfg.d_model,
+        nhead=cfg.nhead,
+        num_layers=cfg.num_layers,
+        dim_ff=cfg.dim_ff,
+        dropout=cfg.dropout,
+    ).to(device)
 
-best_val_loss = float("inf")
-best_model_path = "best_mini_gpt_reverse.pth"
+    wandb.watch(model, log="all", log_freq=100)
 
+    optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr)
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", factor=0.5, patience=2)
 
-# =========================================================
-# Training
-# =========================================================
-for epoch in range(cfg.num_epochs):
-    train_loss = train_one_epoch(model, train_loader, optimizer, epoch)
-    val_loss = evaluate_loss(model, val_loader)
-    val_acc = exact_match_accuracy(model, num_samples=200)
+    best_val_loss = float("inf")
+    best_model_path = "best_mini_gpt_reverse.pth"
 
-    scheduler.step(val_loss)
-    current_lr = optimizer.param_groups[0]["lr"]
+    # Training
+    for epoch in range(cfg.num_epochs):
+        train_loss = train_one_epoch(model, train_loader, optimizer, epoch, device)
+        val_loss = evaluate_loss(model, val_loader, device)
+        val_acc = exact_match_accuracy(model, device, cfg.min_len, cfg.max_len, num_samples=200)
 
-    print(
-        f"Epoch {epoch + 1}/{cfg.num_epochs} | "
-        f"train_loss={train_loss:.4f} | "
-        f"val_loss={val_loss:.4f} | "
-        f"val_exact_match={val_acc:.4f} | "
-        f"lr={current_lr:.6f}"
-    )
+        scheduler.step(val_loss)
+        current_lr = optimizer.param_groups[0]["lr"]
 
-    wandb.log(
-        {
+        print(
+            f"Epoch {epoch + 1}/{cfg.num_epochs} | "
+            f"train_loss={train_loss:.4f} | "
+            f"val_loss={val_loss:.4f} | "
+            f"val_exact_match={val_acc:.4f} | "
+            f"lr={current_lr:.6f}"
+        )
+
+        wandb.log({
             "epoch": epoch + 1,
             "train/epoch_loss": train_loss,
             "val/loss": val_loss,
             "val/exact_match": val_acc,
             "train/lr_epoch": current_lr,
-        }
-    )
+        })
 
-    if val_loss < best_val_loss:
-        best_val_loss = val_loss
-        checkpoint = {
-            "model_state": model.state_dict(),
-            "stoi": stoi,
-            "itos": itos,
-            "config": dict(cfg),
-        }
-        torch.save(checkpoint, best_model_path)
+        if val_loss < best_val_loss:
+            best_val_loss = val_loss
+            torch.save({
+                "model_state": model.state_dict(),
+                "stoi": stoi,
+                "itos": itos,
+                "config": dict(cfg),
+            }, best_model_path)
 
-        wandb.log(
-            {
-                "best/val_loss": best_val_loss,
-                "best/epoch": epoch + 1,
-            }
-        )
+            wandb.log({"best/val_loss": best_val_loss, "best/epoch": epoch + 1})
+            wandb.save(best_model_path)
+            print("  -> saved best model")
 
-        wandb.save(best_model_path)
-        print("  -> saved best model")
+    # Load best & final test
+    checkpoint = torch.load(best_model_path, map_location=device)
+    model = MiniGPT(
+        vocab_size=VOCAB_SIZE,
+        d_model=checkpoint["config"]["d_model"],
+        nhead=checkpoint["config"]["nhead"],
+        num_layers=checkpoint["config"]["num_layers"],
+        dim_ff=checkpoint["config"]["dim_ff"],
+        dropout=checkpoint["config"]["dropout"],
+    ).to(device)
+    model.load_state_dict(checkpoint["model_state"])
+    model.eval()
 
+    test_loss = evaluate_loss(model, test_loader, device)
+    test_acc = exact_match_accuracy(model, device, cfg.min_len, cfg.max_len, num_samples=300)
 
-# =========================================================
-# Load best model
-# =========================================================
-checkpoint = torch.load(best_model_path, map_location=device)
+    print(f"\nFinal test loss: {test_loss:.4f}")
+    print(f"Final test exact match: {test_acc:.4f}")
 
-model = MiniGPT(
-    vocab_size=VOCAB_SIZE,
-    d_model=checkpoint["config"]["d_model"],
-    nhead=checkpoint["config"]["nhead"],
-    num_layers=checkpoint["config"]["num_layers"],
-    dim_ff=checkpoint["config"]["dim_ff"],
-    dropout=checkpoint["config"]["dropout"],
-).to(device)
+    wandb.log({"test/loss": test_loss, "test/exact_match": test_acc})
 
-model.load_state_dict(checkpoint["model_state"])
-model.eval()
+    test_seq = list("moviethunpun")
+    result = generate_reversed(model, test_seq, device)
+    print("Input sequence :", test_seq)
+    print("Generated tokens:", result)
 
-
-# =========================================================
-# Final test
-# =========================================================
-test_loss = evaluate_loss(model, test_loader)
-test_acc = exact_match_accuracy(model, num_samples=300)
-
-print(f"\nFinal test loss: {test_loss:.4f}")
-print(f"Final test exact match: {test_acc:.4f}")
-
-wandb.log(
-    {
-        "test/loss": test_loss,
-        "test/exact_match": test_acc,
-    }
-)
-
-test_seq = list("moviethunpun")
-result = generate_reversed(model, test_seq, device)
-
-print("Input sequence :", test_seq)
-print("Generated tokens:", result)
-
-wandb.log(
-    {
+    wandb.log({
         "examples/test_sequence": "".join(test_seq),
         "examples/generated_tokens": " ".join(result),
-    }
-)
+    })
 
-wandb.finish()
+    wandb.finish()
+
+
+if __name__ == "__main__":
+    main()
