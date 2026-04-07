@@ -248,7 +248,15 @@ def rl_finetune(
 # =========================================================
 # Main
 # =========================================================
+def set_seed(seed: int):
+    random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+
+
 def main():
+    set_seed(42)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     sft_checkpoint_path = "best_mini_gpt_reverse.pth"

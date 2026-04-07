@@ -134,7 +134,15 @@ def exact_match_accuracy(model, device, min_len, max_len, num_samples=200):
 # =========================================================
 # Main
 # =========================================================
+def set_seed(seed: int):
+    random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+
+
 def main():
+    set_seed(42)
     config = {
         "num_train_samples": 50000,
         "num_val_samples": 5000,
