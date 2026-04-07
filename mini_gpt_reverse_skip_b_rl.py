@@ -134,12 +134,14 @@ def rl_finetune(
     num_steps=20000,
     rl_lr=1e-4,
     log_every=100,
+    checkpoint_path="best_mini_gpt_reverse_skip_b_rl.pth",
 ):
     model.train()
     optimizer = torch.optim.AdamW(model.parameters(), lr=rl_lr)
 
     reward_baseline = 0.0
     beta = 0.9
+    best_exact_match = -1.0
 
     for step in range(1, num_steps + 1):
         n = random.randint(min_len, max_len)
@@ -191,6 +193,21 @@ def rl_finetune(
                     "eval/no_b_rate": metrics["no_b_rate"],
                 }
             )
+
+            if metrics["exact_match"] > best_exact_match:
+                best_exact_match = metrics["exact_match"]
+                torch.save(
+                    {
+                        "model_state": model.state_dict(),
+                        "stoi": stoi,
+                        "itos": itos,
+                        "config": {"min_len": min_len, "max_len": max_len},
+                        "best_exact_match": best_exact_match,
+                        "step": step,
+                    },
+                    checkpoint_path,
+                )
+                print(f"  -> saved best RL model (exact_match={best_exact_match:.4f})")
 
     return model
 
@@ -269,16 +286,7 @@ def main():
         num_steps=cfg.num_steps,
         rl_lr=cfg.rl_lr,
         log_every=cfg.log_every,
-    )
-
-    torch.save(
-        {
-            "model_state": model.state_dict(),
-            "stoi": stoi,
-            "itos": itos,
-            "config": dict(cfg),
-        },
-        rl_checkpoint_path,
+        checkpoint_path=rl_checkpoint_path,
     )
 
     print("\n=== After RL ===")
