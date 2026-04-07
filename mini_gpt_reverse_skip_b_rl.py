@@ -69,19 +69,26 @@ def compute_reward(seq, generated_tokens):
     if pred == target:
         reward += 5.0
 
-    # 2) partial token match
+    # 2) positional match — ถูก position และ token
     min_len = min(len(pred), len(target))
-    matches = sum(1 for i in range(min_len) if pred[i] == target[i])
-    reward += 0.2 * matches / max(len(target), 1)
+    positional_matches = sum(1 for i in range(min_len) if pred[i] == target[i])
+    reward += 0.2 * positional_matches / max(len(target), 1)
 
-    # 3) ลงโทษตัว b แรง
+    # 3) character coverage — ถูก token แม้ผิด position (multiset intersection)
+    from collections import Counter
+    pred_chars = Counter(t for t in pred if t not in ("<EOS>",))
+    target_chars = Counter(t for t in target if t not in ("<EOS>",))
+    coverage = sum((pred_chars & target_chars).values())
+    reward += 0.1 * coverage / max(len(target) - 1, 1)
+
+    # 4) ลงโทษตัว b แรง
     num_b = pred.count("b")
     reward -= 1.0 * num_b
 
-    # 4) ความยาวผิดลงโทษ
+    # 5) ความยาวผิดลงโทษ
     reward -= 0.1 * abs(len(pred) - len(target))
 
-    # 5) ถ้าไม่มี EOS ลงโทษเพิ่ม
+    # 6) ถ้าไม่มี EOS ลงโทษเพิ่ม
     if "<EOS>" not in generated_tokens:
         reward -= 0.5
 
