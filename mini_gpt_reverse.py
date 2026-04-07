@@ -14,25 +14,25 @@ from model import MiniGPT, generate_reversed
 # =========================================================
 class ReverseSequenceDataset(Dataset):
     def __init__(self, num_samples=50000, min_len=3, max_len=15):
-        self.samples = []
-        for _ in range(num_samples):
-            n = random.randint(min_len, max_len)
-            seq = [random.choice(CHARS) for _ in range(n)]
-            rev = list(reversed(seq))
-
-            full_tokens = ["<BOS>"] + seq + ["<SEP>"] + rev + ["<EOS>"]
-            token_ids = encode(full_tokens)
-
-            x = token_ids[:-1]
-            y = token_ids[1:]
-
-            self.samples.append((torch.tensor(x), torch.tensor(y)))
+        self.num_samples = num_samples
+        self.min_len = min_len
+        self.max_len = max_len
 
     def __len__(self):
-        return len(self.samples)
+        return self.num_samples
 
     def __getitem__(self, idx):
-        return self.samples[idx]
+        n = random.randint(self.min_len, self.max_len)
+        seq = [random.choice(CHARS) for _ in range(n)]
+        rev = list(reversed(seq))
+
+        full_tokens = ["<BOS>"] + seq + ["<SEP>"] + rev + ["<EOS>"]
+        token_ids = encode(full_tokens)
+
+        x = token_ids[:-1]
+        y = token_ids[1:]
+
+        return torch.tensor(x), torch.tensor(y)
 
 
 def collate_fn(batch):
