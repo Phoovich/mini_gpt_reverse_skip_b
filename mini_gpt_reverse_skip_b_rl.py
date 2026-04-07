@@ -167,6 +167,7 @@ def rl_finetune(
     num_steps=20000,
     rl_lr=1e-4,
     log_every=100,
+    batch_size=8,
     checkpoint_path="best_mini_gpt_reverse_skip_b_rl.pth",
 ):
     model.train()
@@ -178,16 +179,30 @@ def rl_finetune(
     best_exact_match = -1.0
 
     for step in range(1, num_steps + 1):
-        n = random.randint(min_len, max_len)
-        seq = [random.choice(CHARS) for _ in range(n)]
+        # Collect mini-batch of rollouts
+        rewards = []
+        log_prob_sums = []
+        last_seq = None
+        last_generated = None
 
-        generated_tokens, log_prob_sum = rollout_with_logprobs(model, seq, device)
-        reward = compute_reward(seq, generated_tokens)
+        for _ in range(batch_size):
+            n = random.randint(min_len, max_len)
+            seq = [random.choice(CHARS) for _ in range(n)]
+            generated_tokens, log_prob_sum = rollout_with_logprobs(model, seq, device)
+            reward = compute_reward(seq, generated_tokens)
+            rewards.append(reward)
+            log_prob_sums.append(log_prob_sum)
+            last_seq = seq
+            last_generated = generated_tokens
 
-        reward_baseline = beta * reward_baseline + (1 - beta) * reward
-        advantage = reward - reward_baseline
+        mean_reward = sum(rewards) / batch_size
+        reward_baseline = beta * reward_baseline + (1 - beta) * mean_reward
 
-        loss = -log_prob_sum * advantage
+        # Normalize advantages across the batch
+        advantages = [r - reward_baseline for r in rewards]
+        adv_mean = sum(advantages) / batch_size
+
+        loss = -sum(lp * adv for lp, adv in zip(log_prob_sums, advantages)) / batch_size
 
         optimizer.zero_grad()
         loss.backward()
@@ -196,16 +211,16 @@ def rl_finetune(
         scheduler.step()
 
         if step % log_every == 0:
-            target = target_skip_b(seq)
+            target = target_skip_b(last_seq)
             print(
                 f"[RL] step={step} "
-                f"reward={reward:.4f} "
+                f"reward={mean_reward:.4f} "
                 f"baseline={reward_baseline:.4f} "
-                f"adv={advantage:.4f} "
+                f"adv={adv_mean:.4f} "
                 f"loss={loss.item():.4f} "
-                f"sample={''.join(seq)} "
+                f"sample={''.join(last_seq)} "
                 f"target={' '.join(target)} "
-                f"pred={' '.join(generated_tokens)}"
+                f"pred={' '.join(last_generated)}"
             )
 
             metrics = evaluate_skip_b_behavior(
@@ -219,9 +234,9 @@ def rl_finetune(
             wandb.log(
                 {
                     "rl/step": step,
-                    "rl/reward": reward,
+                    "rl/reward": mean_reward,
                     "rl/baseline": reward_baseline,
-                    "rl/advantage": advantage,
+                    "rl/advantage": adv_mean,
                     "rl/loss": loss.item(),
                     "rl/lr": optimizer.param_groups[0]["lr"],
                     "eval/exact_match_skip_b": metrics["exact_match"],
@@ -278,6 +293,7 @@ def main():
         "dropout": base_config["dropout"],
         "num_steps": 10000,
         "rl_lr": 5e-5,
+        "rl_batch_size": 8,
         "log_every": 100,
         "device": str(device),
     }
@@ -327,6 +343,7 @@ def main():
         num_steps=cfg.num_steps,
         rl_lr=cfg.rl_lr,
         log_every=cfg.log_every,
+        batch_size=cfg.rl_batch_size,
         checkpoint_path=rl_checkpoint_path,
     )
 
