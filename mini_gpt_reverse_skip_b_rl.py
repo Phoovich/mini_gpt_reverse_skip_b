@@ -313,7 +313,7 @@ def main():
         max_len=cfg.max_len,
     )
 
-    print("After RL metrics:", after_metrics)
+    print("After RL metrics (in-distribution):", after_metrics)
 
     wandb.log(
         {
@@ -321,6 +321,32 @@ def main():
             "after_rl/no_b_rate": after_metrics["no_b_rate"],
         }
     )
+
+    # Generalization test — sequence ยาวกว่าที่ train (max_len=15)
+    print("\n=== Generalization test (len 7-15) ===")
+    gen_metrics = evaluate_skip_b_behavior(
+        model=model,
+        device=device,
+        num_samples=300,
+        min_len=7,
+        max_len=15,
+    )
+    print("Generalization metrics:", gen_metrics)
+
+    wandb.log(
+        {
+            "generalization/exact_match_skip_b": gen_metrics["exact_match"],
+            "generalization/no_b_rate": gen_metrics["no_b_rate"],
+        }
+    )
+
+    long_words = ["basketball", "abcdefghib", "bananabread", "robotbattle", "bbbbbbbbb"]
+    for word in long_words:
+        seq = list(word)
+        result = generate_reversed(model, seq, device)
+        pred = extract_prediction(result)
+        target = [ch for ch in reversed(seq) if ch != "b"]
+        print(f"Input={word:>14} | RL={''.join(pred):<14} | Target={''.join(target)}")
 
     # Manual test
     test_seq = list("tesbt")
