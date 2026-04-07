@@ -95,17 +95,43 @@ def compute_reward(seq, generated_tokens):
     return reward
 
 
-def sample_seq_mixed(min_len, max_len, prob_has_b=0.7):
-    n = random.randint(min_len, max_len)
-    seq = [random.choice(CHARS) for _ in range(n)]
+def sample_seq_mixed(min_len, max_len, prob_has_b=0.7, rng=None):
+    if rng is None:
+        rng = random
+    n = rng.randint(min_len, max_len)
+    seq = [rng.choice(CHARS) for _ in range(n)]
 
-    if random.random() < prob_has_b:
-        b_count = random.randint(1, max(1, n // 2))
-        positions = random.sample(range(n), k=b_count)
+    if rng.random() < prob_has_b:
+        b_count = rng.randint(1, max(1, n // 2))
+        positions = rng.sample(range(n), k=b_count)
         for pos in positions:
             seq[pos] = "b"
 
     return seq
+
+
+def make_fixed_test_set(num_samples, min_len, max_len, seed=42):
+    rng = random.Random(seed)
+    return [sample_seq_mixed(min_len, max_len, prob_has_b=0.7, rng=rng) for _ in range(num_samples)]
+
+
+def evaluate_on_fixed_test(model, device, test_set):
+    model.eval()
+    exact = 0
+    no_b = 0
+
+    for seq in test_set:
+        result = generate_reversed(model, seq, device)
+        pred = extract_prediction(result)
+        target = [ch for ch in reversed(seq) if ch != "b"]
+
+        if pred == target:
+            exact += 1
+        if "b" not in pred:
+            no_b += 1
+
+    n = len(test_set)
+    return {"exact_match": exact / n, "no_b_rate": no_b / n}
 
 
 def evaluate_skip_b_behavior(model, device, num_samples=200, min_len=3, max_len=15):
@@ -249,6 +275,10 @@ def main():
     wandb.init(project=config["project_name"], config=config)
     cfg = wandb.config
 
+    # Fixed test sets (seed=42) — สร้างครั้งเดียว ใช้ตลอด reproducible
+    fixed_test_indist = make_fixed_test_set(500, cfg.min_len, cfg.max_len, seed=42)
+    fixed_test_ood = make_fixed_test_set(500, 7, 15, seed=42)
+
     model = MiniGPT(
         vocab_size=VOCAB_SIZE,
         d_model=checkpoint["config"]["d_model"],
@@ -269,14 +299,8 @@ def main():
         target = [ch for ch in reversed(seq) if ch != "b"]
         print(f"Input={word:>8} | SFT={''.join(pred):<12} | Target={''.join(target)}")
 
-    before_metrics = evaluate_skip_b_behavior(
-        model=model,
-        device=device,
-        num_samples=200,
-        min_len=cfg.min_len,
-        max_len=cfg.max_len,
-    )
-    print("Before RL metrics:", before_metrics)
+    before_metrics = evaluate_on_fixed_test(model, device, fixed_test_indist)
+    print("Before RL metrics (fixed test):", before_metrics)
 
     wandb.log(
         {
@@ -305,15 +329,8 @@ def main():
         target = [ch for ch in reversed(seq) if ch != "b"]
         print(f"Input={word:>8} | RL ={''.join(pred):<12} | Target={''.join(target)}")
 
-    after_metrics = evaluate_skip_b_behavior(
-        model=model,
-        device=device,
-        num_samples=300,
-        min_len=cfg.min_len,
-        max_len=cfg.max_len,
-    )
-
-    print("After RL metrics (in-distribution):", after_metrics)
+    after_metrics = evaluate_on_fixed_test(model, device, fixed_test_indist)
+    print("After RL metrics (fixed test, in-distribution):", after_metrics)
 
     wandb.log(
         {
@@ -322,15 +339,9 @@ def main():
         }
     )
 
-    # Generalization test — sequence ยาวกว่าที่ train (max_len=15)
-    print("\n=== Generalization test (len 7-15) ===")
-    gen_metrics = evaluate_skip_b_behavior(
-        model=model,
-        device=device,
-        num_samples=300,
-        min_len=7,
-        max_len=15,
-    )
+    # Generalization test — sequence ยาวกว่าที่ train (fixed, seed=42)
+    print("\n=== Generalization test (len 7-15, fixed test) ===")
+    gen_metrics = evaluate_on_fixed_test(model, device, fixed_test_ood)
     print("Generalization metrics:", gen_metrics)
 
     wandb.log(
