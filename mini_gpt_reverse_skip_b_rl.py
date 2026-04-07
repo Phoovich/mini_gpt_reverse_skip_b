@@ -171,6 +171,7 @@ def rl_finetune(
 ):
     model.train()
     optimizer = torch.optim.AdamW(model.parameters(), lr=rl_lr)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_steps, eta_min=rl_lr * 0.1)
 
     reward_baseline = 0.0
     beta = 0.9
@@ -192,6 +193,7 @@ def rl_finetune(
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         optimizer.step()
+        scheduler.step()
 
         if step % log_every == 0:
             target = target_skip_b(seq)
