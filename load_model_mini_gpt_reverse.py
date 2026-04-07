@@ -19,9 +19,20 @@ model = MiniGPT(
 model.load_state_dict(checkpoint["model_state"])
 model.eval()
 
-test_seq = list("asdf")
-result = generate_reversed(model, test_seq, device)
-pred = extract_prediction(result)
+# ใส่คำที่ต้องการทดสอบได้เลย
+test_words = [
+    "asdf",
+    "hello",
+    "python",
+    "reverse",
+]
 
-print("Input :", "".join(test_seq))
-print("Pred  :", "".join(pred))
+print(f"{'Input':<15} {'Predicted':<15} {'Expected':<15} {'Correct'}")
+print("-" * 55)
+for word in test_words:
+    seq = list(word)
+    result = generate_reversed(model, seq, device)
+    pred = extract_prediction(result)
+    expected = list(reversed(seq))
+    correct = "✓" if pred == expected else "✗"
+    print(f"{''.join(seq):<15} {''.join(pred):<15} {''.join(expected):<15} {correct}")
