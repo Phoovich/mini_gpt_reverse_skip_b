@@ -25,10 +25,11 @@ def rollout_with_logprobs(model, seq, device, max_new_tokens=None):
     x = sample_prompt(seq, device)
 
     if max_new_tokens is None:
-        max_new_tokens = len(seq) + 2
+        max_new_tokens = len(seq) + 4
 
     sampled_ids = []
     log_probs = []
+    entropies = []
 
     for _ in range(max_new_tokens):
         pad_mask = x == PAD_ID
@@ -40,9 +41,11 @@ def rollout_with_logprobs(model, seq, device, max_new_tokens=None):
 
         next_id = dist.sample()
         log_prob = dist.log_prob(next_id)
+        entropy = dist.entropy()
 
         sampled_ids.append(next_id.item())
         log_probs.append(log_prob)
+        entropies.append(entropy)
 
         x = torch.cat([x, next_id.unsqueeze(1)], dim=1)
 
@@ -51,8 +54,9 @@ def rollout_with_logprobs(model, seq, device, max_new_tokens=None):
 
     output_tokens = decode(sampled_ids)
     log_prob_sum = torch.stack(log_probs).sum()
+    entropy_mean = torch.stack(entropies).mean()
 
-    return output_tokens, log_prob_sum
+    return output_tokens, log_prob_sum, entropy_mean
 
 
 def compute_reward(seq, generated_tokens):
@@ -91,6 +95,10 @@ def compute_reward(seq, generated_tokens):
     # 6) ถ้าไม่มี EOS ลงโทษเพิ่ม
     if "<EOS>" not in generated_tokens:
         reward -= 0.5
+
+    # 7) ลงโทษ PAD tokens ที่ generate ออกมา (ไม่ควรเกิด)
+    num_pad = pred.count("<PAD>")
+    reward -= 2.0 * num_pad
 
     return reward
 
@@ -159,50 +167,107 @@ def evaluate_skip_b_behavior(model, device, num_samples=200, min_len=3, max_len=
     }
 
 
+def compute_kl_penalty(model, ref_model, seq, device):
+    """KL divergence penalty จาก reference SFT model เพื่อป้องกัน catastrophic forgetting"""
+    tokens = ["<BOS>"] + seq + ["<SEP>"]
+    ids = encode(tokens)
+    x = torch.tensor(ids, dtype=torch.long, device=device).unsqueeze(0)
+
+    pad_mask = x == PAD_ID
+    with torch.no_grad():
+        ref_logits = ref_model(x, pad_mask=pad_mask)
+    logits = model(x, pad_mask=pad_mask)
+
+    ref_log_probs = torch.log_softmax(ref_logits, dim=-1)
+    log_probs = torch.log_softmax(logits, dim=-1)
+    probs = torch.softmax(logits, dim=-1)
+
+    kl = (probs * (log_probs - ref_log_probs)).sum(dim=-1).mean()
+    return kl
+
+
 def rl_finetune(
     model,
+    ref_model,
     device,
     min_len=2,
     max_len=6,
     num_steps=20000,
     rl_lr=1e-4,
     log_every=100,
-    batch_size=8,
+    batch_size=4,
+    grpo_g=4,
+    kl_coef=0.1,
+    entropy_coef=0.01,
+    curriculum_steps=2000,
     checkpoint_path="best_mini_gpt_reverse_skip_b_rl.pth",
+    model_config=None,
 ):
+    """RL fine-tuning ด้วย GRPO + Curriculum Learning
+
+    GRPO: ต่อ 1 prompt จะ rollout grpo_g ครั้ง แล้วคำนวณ advantage ภายใน group
+    Curriculum: เริ่ม max_len เล็ก แล้วค่อยๆ เพิ่มจนถึง max_len จริง
+    """
     model.train()
+    ref_model.eval()
     optimizer = torch.optim.AdamW(model.parameters(), lr=rl_lr)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_steps, eta_min=rl_lr * 0.1)
 
-    reward_baseline = 0.0
-    beta = 0.9
     best_exact_match = -1.0
+    total_rollouts = batch_size * grpo_g
 
     for step in range(1, num_steps + 1):
-        # Collect mini-batch of rollouts
-        rewards = []
-        log_prob_sums = []
+        # Curriculum: เริ่มจาก min_len+1 แล้วค่อยๆ เพิ่มทุก curriculum_steps
+        num_stages = max_len - (min_len + 1)
+        cur_max_len = min(min_len + 1 + (step - 1) // curriculum_steps, max_len) if num_stages > 0 else max_len
+
+        all_log_prob_sums = []
+        all_advantages = []
+        all_entropy_means = []
+        all_kl_penalties = []
+        mean_reward = 0.0
         last_seq = None
         last_generated = None
 
         for _ in range(batch_size):
-            n = random.randint(min_len, max_len)
-            seq = [random.choice(CHARS) for _ in range(n)]
-            generated_tokens, log_prob_sum = rollout_with_logprobs(model, seq, device)
-            reward = compute_reward(seq, generated_tokens)
-            rewards.append(reward)
-            log_prob_sums.append(log_prob_sum)
+            seq = sample_seq_mixed(min_len, cur_max_len, prob_has_b=0.7)
+
+            # GRPO: rollout grpo_g ครั้งต่อ prompt เดียวกัน
+            group_log_probs = []
+            group_rewards = []
+            group_entropies = []
+            group_last_generated = None
+
+            for _ in range(grpo_g):
+                generated_tokens, log_prob_sum, entropy_mean = rollout_with_logprobs(model, seq, device)
+                reward = compute_reward(seq, generated_tokens)
+                group_log_probs.append(log_prob_sum)
+                group_rewards.append(reward)
+                group_entropies.append(entropy_mean)
+                group_last_generated = generated_tokens
+
+            # คำนวณ advantage ภายใน group (แทน EMA baseline)
+            g_mean = sum(group_rewards) / grpo_g
+            g_std = (sum((r - g_mean) ** 2 for r in group_rewards) / grpo_g) ** 0.5
+            group_advantages = [(r - g_mean) / (g_std + 1e-8) for r in group_rewards]
+
+            all_log_prob_sums.extend(group_log_probs)
+            all_advantages.extend(group_advantages)
+            all_entropy_means.extend(group_entropies)
+            mean_reward += g_mean
+
+            kl = compute_kl_penalty(model, ref_model, seq, device)
+            all_kl_penalties.append(kl)
+
             last_seq = seq
-            last_generated = generated_tokens
+            last_generated = group_last_generated
 
-        mean_reward = sum(rewards) / batch_size
-        reward_baseline = beta * reward_baseline + (1 - beta) * mean_reward
+        mean_reward /= batch_size
 
-        # Normalize advantages across the batch
-        advantages = [r - reward_baseline for r in rewards]
-        adv_mean = sum(advantages) / batch_size
-
-        loss = -sum(lp * adv for lp, adv in zip(log_prob_sums, advantages)) / batch_size
+        policy_loss = -sum(lp * adv for lp, adv in zip(all_log_prob_sums, all_advantages)) / total_rollouts
+        kl_loss = kl_coef * sum(all_kl_penalties) / batch_size
+        entropy_bonus = -entropy_coef * sum(all_entropy_means) / total_rollouts
+        loss = policy_loss + kl_loss + entropy_bonus
 
         optimizer.zero_grad()
         loss.backward()
@@ -212,11 +277,14 @@ def rl_finetune(
 
         if step % log_every == 0:
             target = target_skip_b(last_seq)
+            mean_kl = sum(k.item() for k in all_kl_penalties) / batch_size
+            mean_entropy = sum(e.item() for e in all_entropy_means) / total_rollouts
             print(
                 f"[RL] step={step} "
+                f"cur_max_len={cur_max_len} "
                 f"reward={mean_reward:.4f} "
-                f"baseline={reward_baseline:.4f} "
-                f"adv={adv_mean:.4f} "
+                f"kl={mean_kl:.4f} "
+                f"entropy={mean_entropy:.4f} "
                 f"loss={loss.item():.4f} "
                 f"sample={''.join(last_seq)} "
                 f"target={' '.join(target)} "
@@ -235,9 +303,10 @@ def rl_finetune(
                 {
                     "rl/step": step,
                     "rl/reward": mean_reward,
-                    "rl/baseline": reward_baseline,
-                    "rl/advantage": adv_mean,
+                    "rl/cur_max_len": cur_max_len,
                     "rl/loss": loss.item(),
+                    "rl/kl": mean_kl,
+                    "rl/entropy": mean_entropy,
                     "rl/lr": optimizer.param_groups[0]["lr"],
                     "eval/exact_match_skip_b": metrics["exact_match"],
                     "eval/no_b_rate": metrics["no_b_rate"],
@@ -251,7 +320,15 @@ def rl_finetune(
                         "model_state": model.state_dict(),
                         "stoi": stoi,
                         "itos": itos,
-                        "config": {"min_len": min_len, "max_len": max_len},
+                        "config": {
+                            "min_len": min_len,
+                            "max_len": max_len,
+                            "d_model": (model_config or {}).get("d_model", 256),
+                            "nhead": (model_config or {}).get("nhead", 8),
+                            "num_layers": (model_config or {}).get("num_layers", 4),
+                            "dim_ff": (model_config or {}).get("dim_ff", 512),
+                            "dropout": (model_config or {}).get("dropout", 0.1),
+                        },
                         "best_exact_match": best_exact_match,
                         "step": step,
                     },
@@ -294,6 +371,10 @@ def main():
         "num_steps": 10000,
         "rl_lr": 5e-5,
         "rl_batch_size": 8,
+        "grpo_g": 4,
+        "kl_coef": 0.1,
+        "entropy_coef": 0.01,
+        "curriculum_steps": 2000,
         "log_every": 100,
         "device": str(device),
     }
@@ -316,6 +397,19 @@ def main():
 
     model.load_state_dict(checkpoint["model_state"])
 
+    # Reference model (frozen SFT) สำหรับ KL penalty
+    ref_model = MiniGPT(
+        vocab_size=VOCAB_SIZE,
+        d_model=checkpoint["config"]["d_model"],
+        nhead=checkpoint["config"]["nhead"],
+        num_layers=checkpoint["config"]["num_layers"],
+        dim_ff=checkpoint["config"]["dim_ff"],
+        dropout=0.0,
+    ).to(device)
+    ref_model.load_state_dict(checkpoint["model_state"])
+    for p in ref_model.parameters():
+        p.requires_grad_(False)
+
     print("=== Before RL ===")
     before_words = ["tesbt", "abcde", "bbbbb", "ababa", "bomb", "table", "robot"]
     for word in before_words:
@@ -337,6 +431,7 @@ def main():
 
     model = rl_finetune(
         model=model,
+        ref_model=ref_model,
         device=device,
         min_len=cfg.min_len,
         max_len=cfg.max_len,
@@ -344,7 +439,18 @@ def main():
         rl_lr=cfg.rl_lr,
         log_every=cfg.log_every,
         batch_size=cfg.rl_batch_size,
+        grpo_g=cfg.grpo_g,
+        kl_coef=cfg.kl_coef,
+        entropy_coef=cfg.entropy_coef,
+        curriculum_steps=cfg.curriculum_steps,
         checkpoint_path=rl_checkpoint_path,
+        model_config={
+            "d_model": cfg.d_model,
+            "nhead": cfg.nhead,
+            "num_layers": cfg.num_layers,
+            "dim_ff": cfg.dim_ff,
+            "dropout": cfg.dropout,
+        },
     )
 
     print("\n=== After RL ===")

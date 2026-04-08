@@ -13,7 +13,7 @@ from model import MiniGPT, generate_reversed
 # Dataset
 # =========================================================
 class ReverseSequenceDataset(Dataset):
-    def __init__(self, num_samples=50000, min_len=3, max_len=15):
+    def __init__(self, num_samples=50000, min_len=2, max_len=6):
         self.num_samples = num_samples
         self.min_len = min_len
         self.max_len = max_len
