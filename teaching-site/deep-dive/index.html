@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Deep Dive Track — MiniGPT Reverse-Skip-B</title>
+  <script>tailwind = { config: { theme: { extend: {} } } };</script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="../styles.css" />
+  <link rel="stylesheet" href="./deep-dive.css" />
+</head>
+<body class="bg-white">
+
+<div class="max-w-4xl mx-auto px-6 py-12">
+
+  <a href="../index.html" class="deep-dive-link mb-8 inline-flex items-center gap-1">
+    ← กลับสู่ overview
+  </a>
+
+  <h1 class="text-3xl font-bold text-gray-900 mb-2">Deep Dive Track</h1>
+  <p class="text-gray-500 text-base mb-1">MiniGPT Reverse-Skip-B — Math &amp; Code ฉบับเต็ม</p>
+  <p class="text-gray-400 text-sm mb-8">
+    สำหรับผู้ที่อ่าน overview จบแล้ว ต้องการ derivation จาก first principles,
+    worked examples ด้วยตัวเลขจริง, และ code annotations ที่อธิบาย <em>ทำไม</em> ไม่ใช่แค่ <em>ทำอะไร</em>
+  </p>
+
+  <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
+
+    <!-- 01 Attention -->
+    <div class="widget-card flex flex-col h-full">
+      <div class="flex items-start justify-between mb-3">
+        <span class="text-xs font-bold uppercase tracking-wide text-purple-600 bg-purple-50 px-2 py-0.5 rounded">01</span>
+        <span class="text-xs text-gray-400">25–35 นาที</span>
+      </div>
+      <h2 class="text-lg font-bold mb-2 text-gray-900">Transformer &amp; Attention Internals</h2>
+      <p class="text-sm text-gray-600 mb-3 flex-1 leading-relaxed">
+        Q·Kᵀ matrix builder, scale factor จาก variance argument,
+        causal mask เป็น matrix operation ก่อน/หลัง softmax,
+        multi-head split (256→8×32), positional encoding sinusoidal derivation
+      </p>
+      <div class="text-xs text-gray-500 bg-gray-50 rounded p-2 mb-4">
+        <strong>Prerequisites:</strong> matrix multiply, softmax — ไม่ต้องรู้ attention มาก่อน
+      </div>
+      <a href="./01-attention.html" class="btn-primary text-sm text-center block">เริ่ม →</a>
+    </div>
+
+    <!-- 02 SFT -->
+    <div class="widget-card flex flex-col h-full">
+      <div class="flex items-start justify-between mb-3">
+        <span class="text-xs font-bold uppercase tracking-wide text-green-600 bg-green-50 px-2 py-0.5 rounded">02</span>
+        <span class="text-xs text-gray-400">20–25 นาที</span>
+      </div>
+      <h2 class="text-lg font-bold mb-2 text-gray-900">SFT, Teacher Forcing, Cross-Entropy</h2>
+      <p class="text-sm text-gray-600 mb-3 flex-1 leading-relaxed">
+        MLE → cross-entropy derivation, teacher forcing vs. autoregressive inference,
+        exposure bias, dynamic padding + collate_fn, gradient flow per position
+      </p>
+      <div class="text-xs text-gray-500 bg-gray-50 rounded p-2 mb-4">
+        <strong>Prerequisites:</strong> probability distributions, log function — ไม่ต้องรู้ backprop ละเอียด
+      </div>
+      <a href="./02-sft.html" class="btn-primary text-sm text-center block">เริ่ม →</a>
+    </div>
+
+    <!-- 03 GRPO -->
+    <div class="widget-card flex flex-col h-full">
+      <div class="flex items-start justify-between mb-3">
+        <span class="text-xs font-bold uppercase tracking-wide text-pink-600 bg-pink-50 px-2 py-0.5 rounded">03</span>
+        <span class="text-xs text-gray-400">35–45 นาที</span>
+      </div>
+      <h2 class="text-lg font-bold mb-2 text-gray-900">Policy Gradient, REINFORCE, GRPO</h2>
+      <p class="text-sm text-gray-600 mb-3 flex-1 leading-relaxed">
+        J(θ)=E[R] → log-derivative trick → per-step factoring → variance reduction
+        → REINFORCE baseline → GRPO group normalization → KL penalty as trust region
+      </p>
+      <div class="text-xs text-gray-500 bg-gray-50 rounded p-2 mb-4">
+        <strong>Prerequisites:</strong> gradient, expected value E[·], log function — ไม่ต้องรู้ RL มาก่อน
+      </div>
+      <a href="./03-grpo.html" class="btn-primary text-sm text-center block">เริ่ม →</a>
+    </div>
+
+    <!-- 04 Reward -->
+    <div class="widget-card flex flex-col h-full">
+      <div class="flex items-start justify-between mb-3">
+        <span class="text-xs font-bold uppercase tracking-wide text-amber-600 bg-amber-50 px-2 py-0.5 rounded">04</span>
+        <span class="text-xs text-gray-400">20–30 นาที</span>
+      </div>
+      <h2 class="text-lg font-bold mb-2 text-gray-900">Reward Engineering</h2>
+      <p class="text-sm text-gray-600 mb-3 flex-1 leading-relaxed">
+        Sparse vs. dense reward, anatomy ของ 8 reward terms,
+        reward hacking examples, KL coefficient sweep,
+        ความสัมพันธ์กับ advantage normalization
+      </p>
+      <div class="text-xs text-gray-500 bg-gray-50 rounded p-2 mb-4">
+        <strong>Prerequisites:</strong> reward function concept จาก overview sections 5–6
+      </div>
+      <a href="./04-reward-design.html" class="btn-primary text-sm text-center block">เริ่ม →</a>
+    </div>
+
+  </div>
+
+  <p class="text-xs text-gray-400 text-center mt-8">
+    แต่ละหน้าสามารถอ่านแบบ standalone ได้ — มีกล่อง "ก่อนเริ่ม" สรุป context จาก overview
+  </p>
+
+</div>
+</body>
+</html>

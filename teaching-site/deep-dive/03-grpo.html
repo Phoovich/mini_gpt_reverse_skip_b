@@ -1,0 +1,525 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>03 — Policy Gradient &amp; GRPO · Deep Dive</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+  <script>tailwind = { config: { theme: { extend: {} } } };</script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="../styles.css" />
+  <link rel="stylesheet" href="./deep-dive.css" />
+</head>
+<body>
+
+<div class="dd-layout">
+<nav class="left-rail" id="left-rail">
+  <div class="rail-title">03 — GRPO</div>
+  <a href="#s1" class="active">1. J(θ) = E[R]</a>
+  <a href="#s2">2. Log-Derivative Trick</a>
+  <a href="#s3">3. Factoring by Step</a>
+  <a href="#s4">4. Variance Reduction</a>
+  <a href="#s5">5. REINFORCE Baseline</a>
+  <a href="#s6">6. GRPO Group Norm</a>
+  <a href="#s7">7. KL Penalty</a>
+  <a href="#s8">8. Code</a>
+  <a href="#s9">9. Variance Demo</a>
+  <a href="#s10">10. Stop &amp; Check</a>
+  <hr class="rail-sep" />
+  <a href="./index.html" class="rail-back">← Deep Dive Hub</a>
+  <a href="../index.html" class="rail-back">← Overview</a>
+</nav>
+
+<main class="dd-main">
+  <a href="../index.html" class="deep-dive-link mb-2 inline-flex">← กลับสู่ overview</a>
+  <p class="text-xs text-gray-400 mb-4">Deep Dive 03 / 04</p>
+
+  <h1 class="dd-h1">Policy Gradient, REINFORCE, GRPO</h1>
+  <p class="dd-sub">จาก J(θ) = E[R] ถึง GRPO advantage — derivation ทุกขั้นไม่ขาดตอน</p>
+
+  <div class="recap-box">
+    <strong>ก่อนเริ่ม</strong> — จาก overview section 5:
+    <ul class="mt-1 space-y-0.5 list-disc list-inside text-gray-700">
+      <li>GRPO rollout viz: ต่อ 1 prompt rollout 4 ครั้ง → reward → advantage → policy update</li>
+      <li>KL penalty (λ=0.2) ป้องกัน catastrophic forgetting</li>
+      <li>Best checkpoint: step 9,400, exact_match=100% in-distribution</li>
+    </ul>
+  </div>
+
+  <!-- S1 -->
+  <section class="dd-section" id="s1">
+    <h2 class="dd-h2">1. RL Objective: J(θ) = E[R]</h2>
+    <p class="dd-p">
+      เป้าหมายของ RL คือหา policy parameter θ ที่ maximize expected reward ทุก trajectory τ:
+    </p>
+    <div class="formula-block">
+      <div class="flabel">RL Objective</div>
+      \[ J(\theta) = \mathbb{E}_{\tau \sim \pi_\theta}[R(\tau)] = \sum_\tau p_\theta(\tau) \cdot R(\tau) \]
+    </div>
+    <p class="dd-p">
+      ใน task ของเรา trajectory คือ sequence ที่ generate ออกมา เช่น ["m","o","&lt;EOS&gt;"]
+      และ reward คำนวณจาก compute_reward(seq, output)
+    </p>
+    <div class="worked-example">
+      <div class="welabel">ตัวอย่าง — 4 rollouts ของ "bomb"</div>
+      J ≈ (5.30 + (−1.00) + 0.17 + 5.30) / 4 = <strong>2.44</strong><br />
+      เป้าหมาย: optimize θ ให้ J สูงขึ้น = rollouts ที่ถูกต้องเกิดบ่อยขึ้น
+    </div>
+  </section>
+
+  <!-- S2 -->
+  <section class="dd-section" id="s2">
+    <h2 class="dd-h2">2. ∇J(θ): Log-Derivative Trick</h2>
+    <p class="dd-p">
+      เราต้องการ gradient ∇J(θ) เพื่อ update θ แต่ J ขึ้นกับ p_θ(τ) ที่เปลี่ยนตาม θ
+      — จะ differentiate อย่างไร?
+    </p>
+    <div class="formula-block">
+      <div class="flabel">Log-Derivative Trick</div>
+      \[ \nabla_\theta p_\theta(\tau) = p_\theta(\tau) \cdot \nabla_\theta \log p_\theta(\tau) \]
+    </div>
+
+    <div class="proof-box"><span class="ptitle">Proof (3 lines)</span>
+ให้ f = p_θ(τ)
+
+∇_θ f = f · ∇_θ log f
+
+เพราะ d(log f)/dθ = (1/f) · df/dθ → df/dθ = f · d(log f)/dθ  ∎</div>
+
+    <p class="dd-p">นำไปใช้กับ ∇J:</p>
+    <div class="formula-block">
+      \[ \nabla_\theta J(\theta) = \sum_\tau \nabla_\theta p_\theta(\tau) \cdot R(\tau)
+         = \sum_\tau p_\theta(\tau) \cdot \nabla_\theta \log p_\theta(\tau) \cdot R(\tau) \]
+      \[ = \mathbb{E}_\tau\!\left[ R(\tau) \cdot \nabla_\theta \log p_\theta(\tau) \right] \]
+    </div>
+
+    <div class="worked-example">
+      <div class="welabel">ตัวอย่าง</div>
+      \( \log p_\theta(\text{"mo"}\,\text{&lt;EOS&gt;}\mid\text{"bomb"}) \)<br />
+      = log π(m|ctx₁) + log π(o|ctx₂) + log π(&lt;EOS&gt;|ctx₃)<br />
+      = sum ของ log_prob ทุก step ← นี่คือสิ่งที่ rollout_with_logprobs() track
+    </div>
+  </section>
+
+  <!-- S3 -->
+  <section class="dd-section" id="s3">
+    <h2 class="dd-h2">3. Factoring by Step</h2>
+    <p class="dd-p">
+      trajectory p_θ(τ) เขียนเป็น product ของ per-step policy probability (Markov property):
+    </p>
+    <div class="formula-block">
+      \[ p_\theta(\tau) = \prod_{t=1}^{T} \pi_\theta(a_t \mid s_t) \]
+      \[ \log p_\theta(\tau) = \sum_{t=1}^{T} \log \pi_\theta(a_t \mid s_t) \]
+      \[ \nabla_\theta \log p_\theta(\tau) = \sum_{t=1}^{T} \nabla_\theta \log \pi_\theta(a_t \mid s_t) \]
+    </div>
+    <p class="dd-p">ดังนั้น policy gradient estimator กลายเป็น:</p>
+    <div class="formula-block">
+      \[ \nabla_\theta J(\theta) = \mathbb{E}\!\left[ \sum_t \nabla_\theta \log \pi_\theta(a_t|s_t) \cdot R(\tau) \right] \]
+    </div>
+    <p class="dd-p text-sm text-gray-600">
+      ใน code: <code>log_prob_sum = torch.stack(log_probs).sum()</code>
+      แล้ว <code>policy_loss = -log_prob_sum × advantage</code>
+    </p>
+  </section>
+
+  <!-- S4 -->
+  <section class="dd-section" id="s4">
+    <h2 class="dd-h2">4. Variance Reduction — Baseline Subtraction</h2>
+    <p class="dd-p">
+      <strong>ปัญหา</strong>: estimator R(τ)·∇log p มี variance สูงมาก
+      เพราะ R(τ) กระโดดขึ้นลงตาม rollout — gradient noisy → เรียนช้า
+    </p>
+
+    <div class="formula-block">
+      <div class="flabel">Baseline Subtraction Theorem</div>
+      สำหรับ baseline b ที่ไม่ขึ้นกับ τ:
+      \[ \mathbb{E}_\tau\!\left[ \nabla_\theta \log p_\theta(\tau) \cdot b \right] = 0 \]
+      ดังนั้น: \( \nabla J(\theta) = \mathbb{E}[(R(\tau) - b) \cdot \nabla \log p_\theta(\tau)] \)
+      และ variance ลดลง
+    </div>
+
+    <div class="proof-box"><span class="ptitle">Proof (3 lines)</span>
+𝔼_τ[∇_θ log p_θ(τ) · b]
+  = b · Σ_τ ∇_θ p_θ(τ)
+  = b · ∇_θ (Σ_τ p_θ(τ))   — gradient กับ sum สลับได้
+  = b · ∇_θ(1) = 0          — เพราะ Σ_τ p_θ(τ) = 1 เสมอ  ∎</div>
+  </section>
+
+  <!-- S5 -->
+  <section class="dd-section" id="s5">
+    <h2 class="dd-h2">5. REINFORCE with EMA Baseline</h2>
+    <p class="dd-p">
+      วิธีมาตรฐาน: ใช้ exponential moving average (EMA) ของ reward ที่ผ่านมาเป็น baseline:
+    </p>
+    <div class="formula-block">
+      \[ b_{t+1} = \beta \cdot b_t + (1 - \beta) \cdot R(\tau_t) \]
+      Advantage: \( A(\tau_t) = R(\tau_t) - b_t \)
+    </div>
+    <p class="dd-p"><strong>ข้อเสีย</strong>:</p>
+    <ul class="dd-p list-disc list-inside ml-2 space-y-1">
+      <li>ต้องการ warm-up period — ช่วงแรก b ≈ 0 ไม่ช่วยลด variance</li>
+      <li>b อาจ lag กับ non-stationary reward distribution ระหว่าง training</li>
+      <li>ต้องเก็บ state ข้ามหลาย steps</li>
+    </ul>
+  </section>
+
+  <!-- S6 -->
+  <section class="dd-section" id="s6">
+    <h2 class="dd-h2">6. GRPO — Group Relative Policy Optimization</h2>
+    <p class="dd-p">
+      แทน EMA baseline ด้วย <em>group mean</em> ของ G rollouts บน prompt เดียวกัน:
+    </p>
+    <div class="formula-block">
+      <div class="flabel">GRPO Advantage</div>
+      \[ \bar{r} = \frac{1}{G}\sum_{i=1}^{G} r_i \qquad \sigma_r = \sqrt{\frac{1}{G}\sum_{i=1}^{G}(r_i-\bar{r})^2} \]
+      \[ A_i = \frac{r_i - \bar{r}}{\sigma_r + \varepsilon} \]
+    </div>
+
+    <div class="worked-example">
+      <div class="welabel">ตัวอย่าง "bomb", G=4</div>
+      Rewards: 5.30, −1.00, 0.17, 5.30<br />
+      r̄ = (5.30 − 1.00 + 0.17 + 5.30) / 4 = <strong>2.44</strong><br />
+      σ = √[(2.86² + 3.44² + 2.27² + 2.86²) / 4] = √(8.35) ≈ <strong>2.89</strong><br />
+      A₁ = (5.30 − 2.44) / 2.89 ≈ <strong>+0.99</strong><br />
+      A₂ = (−1.00 − 2.44) / 2.89 ≈ <strong>−1.19</strong><br />
+      A₃ = (0.17 − 2.44) / 2.89 ≈ <strong>−0.79</strong><br />
+      A₄ = (5.30 − 2.44) / 2.89 ≈ <strong>+0.99</strong>
+    </div>
+
+    <p class="dd-p text-sm">
+      <strong>Bias note</strong>: group mean correlated กับ rollout ตัวเอง → technically slightly biased
+      แต่ bias = O(1/G) → ที่ G=4 ยอมรับได้ใน practice (จาก GRPO paper, DeepSeekMath 2024)
+    </p>
+
+    <div class="formula-block">
+      <div class="flabel">Policy Loss</div>
+      \[ \mathcal{L}_{\text{policy}}(\theta) = -\frac{1}{B \cdot G} \sum_{j=1}^{B} \sum_{i=1}^{G} \log p_\theta(\tau_{j,i}) \cdot A_{j,i} \]
+    </div>
+  </section>
+
+  <!-- S7 -->
+  <section class="dd-section" id="s7">
+    <h2 class="dd-h2">7. KL Penalty — Trust Region</h2>
+    <p class="dd-p">
+      ถ้า optimize J(θ) โดยไม่มี constraint policy อาจ drift จาก SFT reference มากจนลืมการ reverse
+      ป้องกันด้วย KL penalty (Lagrangian relaxation):
+    </p>
+    <div class="formula-block">
+      <div class="flabel">Total Loss</div>
+      \[ \mathcal{L}(\theta) = \mathcal{L}_{\text{policy}} + \lambda \cdot \text{KL}(\pi_\theta \| \pi_{\text{ref}}) + \mathcal{L}_{\text{entropy}} \]
+      \[ \text{KL}(\pi_\theta \| \pi_{\text{ref}}) = \mathbb{E}_{x}\!\left[ \sum_t \pi_\theta(a_t|x) \log \frac{\pi_\theta(a_t|x)}{\pi_{\text{ref}}(a_t|x)} \right] \]
+    </div>
+
+    <p class="dd-p">
+      Heritage: TRPO ใช้ natural gradient + KL hard constraint; PPO ใช้ clipped ratio (soft constraint);
+      GRPO ใช้ KL penalty (Lagrangian form) — simpler, differentiable directly
+    </p>
+
+    <p class="dd-p">ค่าที่ใช้: λ = kl_coef = 0.2, entropy_coef = 0.005 (entropy bonus ส่งเสริม exploration)</p>
+  </section>
+
+  <!-- S8 -->
+  <section class="dd-section" id="s8">
+    <h2 class="dd-h2">8. Code</h2>
+
+    <h3 class="dd-h3">mini_gpt_reverse_skip_b_rl.py:24–59 — rollout_with_logprobs</h3>
+    <pre class="code-block"><code><span class="line-num">24</span><span class="kw">def</span> <span class="fn">rollout_with_logprobs</span>(model, seq, device, max_new_tokens=<span class="kw">None</span>):
+<span class="line-num">25</span>    x = sample_prompt(seq, device)
+<span class="line-num">26</span>
+<span class="line-num">27</span>    <span class="kw">if</span> max_new_tokens <span class="kw">is None</span>:
+<span class="line-num">28</span>        max_new_tokens = len(seq) + <span class="nm">4</span>
+<span class="line-num">29</span>
+<span class="line-num">30</span>    sampled_ids = []
+<span class="line-num">31</span>    log_probs = []
+<span class="line-num">32</span>    entropies = []
+<span class="line-num">33</span>
+<span class="line-num">34</span>    <span class="kw">for</span> _ <span class="kw">in</span> range(max_new_tokens):
+<span class="line-num">35</span>        pad_mask = x == PAD_ID
+<span class="line-num">36</span>        logits = model(x, pad_mask=pad_mask)
+<span class="line-num">37</span>        next_token_logits = logits[:, -<span class="nm">1</span>, :]
+<span class="line-num">38</span>
+<span class="line-num">39</span>        probs = torch.softmax(next_token_logits, dim=-<span class="nm">1</span>)
+<span class="line-num">40</span>        dist = torch.distributions.Categorical(probs=probs)
+<span class="line-num">41</span>
+<span class="line-num">42</span>        next_id = dist.sample()
+<span class="line-num">43</span>        log_prob = dist.log_prob(next_id)
+<span class="line-num">44</span>        entropy = dist.entropy()
+<span class="line-num">45</span>
+<span class="line-num">46</span>        sampled_ids.append(next_id.item())
+<span class="line-num">47</span>        log_probs.append(log_prob)
+<span class="line-num">48</span>        entropies.append(entropy)
+<span class="line-num">49</span>
+<span class="line-num">50</span>        x = torch.cat([x, next_id.unsqueeze(<span class="nm">1</span>)], dim=<span class="nm">1</span>)
+<span class="line-num">51</span>
+<span class="line-num">52</span>        <span class="kw">if</span> next_id.item() <span class="kw">in</span> (EOS_ID, SEP_ID, BOS_ID):
+<span class="line-num">53</span>            <span class="kw">break</span>
+<span class="line-num">54</span>
+<span class="line-num">55</span>    output_tokens = decode(sampled_ids)
+<span class="line-num">56</span>    log_prob_sum = torch.stack(log_probs).sum()
+<span class="line-num">57</span>    entropy_mean = torch.stack(entropies).mean()
+<span class="line-num">58</span>
+<span class="line-num">59</span>    <span class="kw">return</span> output_tokens, log_prob_sum, entropy_mean</code></pre>
+
+    <div class="annotation-box">
+      <div class="ann-label">ทำไม</div>
+      line 42: <code>dist.sample()</code> ใช้ categorical sampling ไม่ใช่ argmax —
+      เพื่อ explore action space ระหว่าง training (ถ้าใช้ argmax ทุก rollout ได้ output เดิม → variance=0 → no gradient)<br />
+      line 43: <code>dist.log_prob(next_id)</code> = log π(aₜ|sₜ) ← ตัวนี้คูณกับ advantage เป็น policy gradient<br />
+      line 44: <code>dist.entropy()</code> สำหรับ entropy bonus — ป้องกัน policy collapse ไปที่ output เดิมซ้ำๆ
+    </div>
+
+    <h3 class="dd-h3">mini_gpt_reverse_skip_b_rl.py:257–265 — GRPO Advantage Block</h3>
+    <pre class="code-block"><code><span class="line-num">257</span>            <span class="cm"># คำนวณ advantage ภายใน group (แทน EMA baseline)</span>
+<span class="line-num">258</span>            g_mean = sum(group_rewards) / grpo_g
+<span class="line-num">259</span>            g_std = (sum((r - g_mean) ** <span class="nm">2</span> <span class="kw">for</span> r <span class="kw">in</span> group_rewards) / grpo_g) ** <span class="nm">0.5</span>
+<span class="line-num">260</span>            group_advantages = [(r - g_mean) / (g_std + <span class="nm">1e-8</span>) <span class="kw">for</span> r <span class="kw">in</span> group_rewards]</code></pre>
+
+    <div class="annotation-box">
+      <div class="ann-label">ทำไม</div>
+      g_mean/g_std คำนวณ <em>online</em> ภายใน group เดียว — ไม่ต้อง EMA หรือ value network แยก;<br />
+      <code>1e-8</code> epsilon ป้องกัน division by zero เมื่อ G rollouts ได้ reward เหมือนกันหมด (σ=0);
+      ผลคือ Var(advantages) = 1 by construction — ทำให้ learning rate effective คงที่ไม่ขึ้นกับ reward scale
+    </div>
+
+    <h3 class="dd-h3">mini_gpt_reverse_skip_b_rl.py:178–194 — compute_kl_penalty</h3>
+    <pre class="code-block"><code><span class="line-num">178</span><span class="kw">def</span> <span class="fn">compute_kl_penalty</span>(model, ref_model, seq, device):
+<span class="line-num">179</span>    <span class="cm">"""KL divergence penalty จาก reference SFT model"""</span>
+<span class="line-num">180</span>    tokens = [<span class="st">"&lt;BOS&gt;"</span>] + seq + [<span class="st">"&lt;SEP&gt;"</span>]
+<span class="line-num">181</span>    ids = encode(tokens)
+<span class="line-num">182</span>    x = torch.tensor(ids, dtype=torch.long, device=device).unsqueeze(<span class="nm">0</span>)
+<span class="line-num">183</span>
+<span class="line-num">184</span>    pad_mask = x == PAD_ID
+<span class="line-num">185</span>    <span class="kw">with</span> torch.no_grad():
+<span class="line-num">186</span>        ref_logits = ref_model(x, pad_mask=pad_mask)
+<span class="line-num">187</span>    logits = model(x, pad_mask=pad_mask)
+<span class="line-num">188</span>
+<span class="line-num">189</span>    ref_log_probs = torch.log_softmax(ref_logits, dim=-<span class="nm">1</span>)
+<span class="line-num">190</span>    log_probs = torch.log_softmax(logits, dim=-<span class="nm">1</span>)
+<span class="line-num">191</span>    probs = torch.softmax(logits, dim=-<span class="nm">1</span>)
+<span class="line-num">192</span>
+<span class="line-num">193</span>    kl = (probs * (log_probs - ref_log_probs)).sum(dim=-<span class="nm">1</span>).mean()
+<span class="line-num">194</span>    <span class="kw">return</span> kl</code></pre>
+
+    <div class="annotation-box">
+      <div class="ann-label">ทำไม</div>
+      line 185: <code>torch.no_grad()</code> สำหรับ ref_model เพื่อ freeze reference (SFT) weights —
+      gradient ไม่ไหลผ่าน ref_model<br />
+      line 193: <code>(probs * (log_probs − ref_log_probs)).sum(dim=-1)</code> =
+      KL(π_θ ∥ π_ref) per-token averaged ทุก position ใน prompt sequence
+    </div>
+  </section>
+
+  <!-- S9 Variance Demo -->
+  <section class="dd-section" id="s9">
+    <h2 class="dd-h2">9. Variance Reduction Demo</h2>
+    <div id="real-finding-display"></div>
+
+    <p class="dd-p">
+      3 estimators เปรียบเทียบบน rewards เดียวกัน 4 rollouts: {5.30, −1.00, 0.17, 5.30}
+    </p>
+
+    <div class="viz-card">
+      <div class="vtitle">Reward signals: REINFORCE vs Mean-Baseline vs GRPO-Normalized</div>
+      <div class="flex gap-3" id="var-demo-wrap">
+        <!-- filled by JS -->
+      </div>
+      <div class="mt-4 text-xs text-gray-500 border-t border-gray-100 pt-3">
+        <strong>Var(REINFORCE)</strong> = Var(R) ≈ 8.35 &nbsp;|&nbsp;
+        <strong>Var(mean-baseline)</strong> = Var(R−r̄) = 8.35 (same) &nbsp;|&nbsp;
+        <strong>Var(GRPO)</strong> = Var(A) = 1.0 (by construction)
+      </div>
+    </div>
+
+    <div class="formula-block">
+      <div class="flabel">Variance comparison — same 4 rollouts</div>
+      <table class="text-xs w-full border-collapse" id="var-table">
+        <thead><tr>
+          <th class="p-1.5 text-left border border-gray-200 bg-gray-50">Estimator</th>
+          <th class="p-1.5 text-right border border-gray-200 bg-gray-50">Values</th>
+          <th class="p-1.5 text-right border border-gray-200 bg-gray-50">Variance</th>
+        </tr></thead>
+        <tbody>
+          <tr><td class="p-1.5 border border-gray-200">REINFORCE: R(τ)</td>
+              <td class="p-1.5 text-right border border-gray-200 font-mono text-xs">{5.30, −1.00, 0.17, 5.30}</td>
+              <td class="p-1.5 text-right border border-gray-200 font-mono">8.35</td></tr>
+          <tr><td class="p-1.5 border border-gray-200">Mean-baseline: R−r̄</td>
+              <td class="p-1.5 text-right border border-gray-200 font-mono text-xs">{2.86, −3.44, −2.27, 2.86}</td>
+              <td class="p-1.5 text-right border border-gray-200 font-mono">8.35</td></tr>
+          <tr class="bg-green-50"><td class="p-1.5 border border-gray-200">GRPO: (R−r̄)/σ</td>
+              <td class="p-1.5 text-right border border-gray-200 font-mono text-xs">{0.99, −1.19, −0.79, 0.99}</td>
+              <td class="p-1.5 text-right border border-gray-200 font-mono font-bold text-green-700">1.00</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- S10 -->
+  <section class="dd-section" id="s10">
+    <h2 class="dd-h2">10. Stop &amp; Check</h2>
+    <div class="check-section">
+      <div class="ctitle">ทดสอบความเข้าใจ</div>
+
+      <p class="text-sm font-semibold mb-1">Q1: group rewards = [3, 3, 3, 3] advantage = เท่าไร?</p>
+      <details class="check-details mb-3">
+        <summary>เฉลย</summary>
+        <div class="answer">
+          σ_r = 0; A = (3−3)/(0+1e-8) ≈ 0 สำหรับทุก rollout<br />
+          → policy loss = 0 → no gradient update<br />
+          ε = 1e-8 ป้องกัน NaN (division by zero)<br />
+          <strong>Insight</strong>: ถ้า G rollouts ได้ reward เท่ากันหมด model ไม่รู้ว่าต้องปรับอะไร
+        </div>
+      </details>
+
+      <p class="text-sm font-semibold mb-1">Q2: ทำไม kl_coef = 0.0 จึงเป็นปัญหา?</p>
+      <details class="check-details mb-3">
+        <summary>เฉลย</summary>
+        <div class="answer">
+          ไม่มี KL constraint → model optimize reward โดยไม่มี "anchor"<br />
+          อาจ converge ไปที่: generate &lt;EOS&gt; ทันที (reward = −0.2 ดีกว่า reverse ผิด)<br />
+          หรือ policy degenerate อื่นๆ ที่ reward สูงแต่ไม่ใช่ intent<br />
+          KL ป้องกัน catastrophic forgetting ของ reversal behavior
+        </div>
+      </details>
+
+      <p class="text-sm font-semibold mb-1">Q3: GRPO ด้วย G=1 (1 rollout per prompt) ทำงานไหม?</p>
+      <details class="check-details">
+        <summary>เฉลย</summary>
+        <div class="answer">
+          ไม่ทำงาน: baseline = r̄ = R(τ) เอง → A = (R−R)/std = 0/σ = 0<br />
+          → policy loss = 0 → no gradient<br />
+          GRPO ต้องการ G ≥ 2 เพื่อ compute meaningful group variance<br />
+          G = 4 ใน project นี้เป็น practical tradeoff ระหว่าง variance reduction และ compute cost
+        </div>
+      </details>
+    </div>
+  </section>
+
+  <div class="dd-prev-next">
+    <a href="./02-sft.html">← 02: SFT</a>
+    <a href="./04-reward-design.html">04: Reward →</a>
+  </div>
+</main>
+</div>
+
+<!-- Data -->
+<script src="../data/grpo_variance_demo.js"></script>
+
+<script>
+// ── Variance Demo ─────────────────────────────────────────────────────────────
+(function() {
+  var D = window.DATA_GRPO_VARIANCE;
+  if (!D) return;
+
+  // Show real finding if present
+  if (D.real_finding) {
+    var box = document.getElementById('real-finding-display');
+    box.innerHTML = '<div class="real-finding-box">' + D.real_finding + '</div>';
+  }
+
+  var rewards = D.rollouts.map(function(r) { return r.reward; });
+  var rmean   = D.group_mean;
+  var rstd    = D.group_std;
+  var meanBase = rewards.map(function(r) { return +(r - rmean).toFixed(3); });
+  var grpo     = rewards.map(function(r) { return +((r - rmean) / (rstd + 1e-8)).toFixed(3); });
+
+  var DATASETS = [
+    { label: 'REINFORCE',     values: rewards,  color: '#ef4444' },
+    { label: 'Mean-Baseline', values: meanBase, color: '#f59e0b' },
+    { label: 'GRPO-Norm',     values: grpo,     color: '#16a34a' }
+  ];
+
+  var wrap = document.getElementById('var-demo-wrap');
+  DATASETS.forEach(function(ds) {
+    var col = document.createElement('div');
+    col.className = 'var-col';
+    col.innerHTML = '<div class="vc-title">' + ds.label + '</div>';
+
+    var allVals = ds.values;
+    var maxAbs = Math.max.apply(null, allVals.map(Math.abs)) || 1;
+    var BAR_MAX = 80;
+
+    ds.values.forEach(function(v, i) {
+      var row = document.createElement('div');
+      row.style.cssText = 'display:flex;align-items:center;gap:6px;margin:3px 0;';
+
+      var label = document.createElement('span');
+      label.style.cssText = 'font-size:0.7rem;width:28px;text-align:right;color:#6b7280;';
+      label.textContent = 'R' + (i+1);
+
+      var barWrap = document.createElement('div');
+      barWrap.style.cssText = 'position:relative;width:' + (BAR_MAX*2+2) + 'px;height:18px;background:#f3f4f6;border-radius:3px;overflow:hidden;';
+
+      var bar = document.createElement('div');
+      var pct = Math.abs(v) / maxAbs;
+      var barW = Math.round(pct * BAR_MAX);
+      if (v >= 0) {
+        bar.style.cssText = 'position:absolute;left:' + BAR_MAX + 'px;top:2px;height:14px;width:' + barW + 'px;background:' + ds.color + ';border-radius:0 2px 2px 0;';
+      } else {
+        bar.style.cssText = 'position:absolute;right:' + BAR_MAX + 'px;top:2px;height:14px;width:' + barW + 'px;background:' + ds.color + ';border-radius:2px 0 0 2px;opacity:0.7;';
+        bar.style.right = (BAR_MAX - barW) + 'px';
+        bar.style.left = '';
+        var adjustedLeft = BAR_MAX - barW;
+        bar.style.left = adjustedLeft + 'px';
+      }
+      barWrap.appendChild(bar);
+
+      // Center line
+      var cl = document.createElement('div');
+      cl.style.cssText = 'position:absolute;left:' + BAR_MAX + 'px;top:0;height:100%;width:1px;background:#9ca3af;';
+      barWrap.appendChild(cl);
+
+      var val = document.createElement('span');
+      val.style.cssText = 'font-size:0.7rem;font-family:monospace;width:40px;color:#374151;';
+      val.textContent = v > 0 ? '+' + v : v;
+
+      row.appendChild(label);
+      row.appendChild(barWrap);
+      row.appendChild(val);
+      col.appendChild(row);
+    });
+
+    // Variance display
+    var variances = {
+      'REINFORCE': D.variances.reinforce,
+      'Mean-Baseline': D.variances.mean_baseline,
+      'GRPO-Norm': D.variances.grpo_normalized
+    };
+    var v = variances[ds.label];
+    var varEl = document.createElement('div');
+    varEl.className = 'vc-var';
+    varEl.style.color = ds.color;
+    varEl.textContent = 'Var≈' + (v !== undefined ? v.toFixed(2) : '?');
+    col.appendChild(varEl);
+
+    wrap.appendChild(col);
+  });
+})();
+
+// ── Scroll spy ────────────────────────────────────────────────────────────────
+(function() {
+  var ids=['s1','s2','s3','s4','s5','s6','s7','s8','s9','s10'];
+  if (!('IntersectionObserver' in window)) return;
+  var visible={};
+  var obs=new IntersectionObserver(function(entries) {
+    entries.forEach(function(e){visible[e.target.id]=e.intersectionRatio;});
+    var best=null,bestR=0;
+    ids.forEach(function(id){var r=visible[id]||0;if(r>bestR){bestR=r;best=id;}});
+    if(!best) return;
+    document.querySelectorAll('#left-rail a[href]').forEach(function(a){
+      a.classList.toggle('active',a.getAttribute('href')==='#'+best);
+    });
+  },{threshold:[0.1,0.5]});
+  ids.forEach(function(id){var el=document.getElementById(id);if(el)obs.observe(el);});
+})();
+</script>
+
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"></script>
+<script>
+  renderMathInElement(document.body,{
+    delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false}],
+    throwOnError:false
+  });
+</script>
+</body>
+</html>

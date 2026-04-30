@@ -1,0 +1,521 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>01 — Transformer &amp; Attention · Deep Dive</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+  <script>tailwind = { config: { theme: { extend: {} } } };</script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="../styles.css" />
+  <link rel="stylesheet" href="./deep-dive.css" />
+</head>
+<body>
+
+<div class="dd-layout">
+<nav class="left-rail" id="left-rail">
+  <div class="rail-title">01 — Attention</div>
+  <a href="#s1" class="active">1. ปัญหาที่ Attention แก้</a>
+  <a href="#s2">2. Q, K, V คืออะไร</a>
+  <a href="#s3">3. Scaled Dot-Product</a>
+  <a href="#s4">4. Causal Mask</a>
+  <a href="#s5">5. Multi-Head</a>
+  <a href="#s6">6. Positional Encoding</a>
+  <a href="#s7">7. Code</a>
+  <a href="#s8">8. Stop &amp; Check</a>
+  <hr class="rail-sep" />
+  <a href="./index.html" class="rail-back">← Deep Dive Hub</a>
+  <a href="../index.html" class="rail-back">← Overview</a>
+</nav>
+
+<main class="dd-main">
+  <a href="../index.html" class="deep-dive-link mb-2 inline-flex">← กลับสู่ overview</a>
+  <p class="text-xs text-gray-400 mb-4">Deep Dive 01 / 04</p>
+
+  <h1 class="dd-h1">Transformer &amp; Attention Internals</h1>
+  <p class="dd-sub">จาก Q·Kᵀ ถึง Causal Mask — math ครบวงจร</p>
+
+  <div class="recap-box">
+    <strong>ก่อนเริ่ม</strong> — จาก overview section 3:
+    <ul class="mt-1 space-y-0.5 list-disc list-inside text-gray-700">
+      <li>Causal mask grid: แต่ละ token ดูได้เฉพาะ tokens ก่อนหน้า (สีเขียว = attended, สีเทา = masked)</li>
+      <li>Architecture: d_model=256, nhead=8, num_layers=4, dim_ff=512, total=2.1M params</li>
+      <li>Positional encoding: fixed (ไม่มี learnable params)</li>
+    </ul>
+  </div>
+
+  <!-- S1 -->
+  <section class="dd-section" id="s1">
+    <h2 class="dd-h2">1. ปัญหาที่ Attention แก้</h2>
+    <p class="dd-p">
+      Embedding ปกติ (fixed lookup) ให้ vector เดิมสำหรับคำเดิมเสมอ ไม่ว่า context จะเป็นอะไร
+      แต่ในภาษาธรรมชาติ ความหมายขึ้นกับ context:
+      "bank" ใน "river <strong>bank</strong>" กับ "savings <strong>bank</strong>" ควรได้ representation ต่างกัน
+    </p>
+    <p class="dd-p">
+      Self-attention แก้ปัญหานี้โดยให้แต่ละ token "ดู" tokens อื่นทั้งหมด (หรือที่อนุญาต)
+      แล้วสร้าง <em>context-dependent representation</em> — แต่ละ token มี context ใหม่ทุก layer
+    </p>
+  </section>
+
+  <!-- S2 -->
+  <section class="dd-section" id="s2">
+    <h2 class="dd-h2">2. Q, K, V คืออะไร?</h2>
+    <p class="dd-p">
+      อุปมาจาก information retrieval: สมมติคุณค้นหาข้อมูลในฐานข้อมูล
+    </p>
+    <ul class="dd-p list-disc list-inside ml-2 space-y-1">
+      <li><strong>Q (Query)</strong> = คำถามที่ token ปัจจุบันต้องการรู้ "ฉันต้องการข้อมูลอะไร?"</li>
+      <li><strong>K (Key)</strong> = "ป้ายชื่อ" ของแต่ละ token ในฐานข้อมูล</li>
+      <li><strong>V (Value)</strong> = ข้อมูลจริงที่จะดึงมา ถ้าคีย์ตรง</li>
+    </ul>
+    <p class="dd-p">
+      ทั้ง Q, K, V ล้วนมาจาก input เดียวกัน (self-attention) แต่ผ่าน linear projection ต่างกัน:
+    </p>
+    <div class="formula-block">
+      \[ Q = XW_Q,\quad K = XW_K,\quad V = XW_V \]
+      <div class="text-xs text-gray-500 mt-1">X ∈ ℝ^(T×d_model), W_Q, W_K, W_V ∈ ℝ^(d_model×d_k)</div>
+    </div>
+    <p class="dd-p">
+      สำหรับโมเดลนี้: d_model=256, d_k = d_model/nhead = 256/8 = 32
+    </p>
+  </section>
+
+  <!-- S3 -->
+  <section class="dd-section" id="s3">
+    <h2 class="dd-h2">3. Scaled Dot-Product Attention</h2>
+    <div class="formula-block">
+      <div class="flabel">สูตรหลัก</div>
+      \[ \text{Attention}(Q,K,V) = \text{softmax}\!\left(\frac{QK^T}{\sqrt{d_k}}\right)V \]
+    </div>
+
+    <h3 class="dd-h3">ทำไมต้องหารด้วย √d_k?</h3>
+    <p class="dd-p">
+      สมมติ Q, K เป็น random vectors ∈ ℝ^32 ที่มี mean=0, variance=1
+      แต่ละ component ของ Q·K = Σᵢ QᵢKᵢ มี variance=1 รวมกัน d_k=32 items
+      → Var(Q·K) = d_k = 32
+    </p>
+    <div class="proof-box"><span class="ptitle">Variance argument</span>
+Var(Q·K) = Σᵢ Var(Qᵢ·Kᵢ) = Σᵢ 1 = d_k  (independent components)
+
+หาร √d_k: Var(Q·K / √d_k) = Var(Q·K) / d_k = 1
+
+→ dot product มี variance=1 → softmax ไม่ saturate ที่ 0 หรือ 1</div>
+
+    <div class="worked-example">
+      <div class="welabel">ตัวอย่าง</div>
+      d_k = 32 → scale factor = 1/√32 ≈ <strong>0.177</strong><br />
+      raw dot product ≈ 4.8 (ใหญ่ → softmax saturate) → scaled ≈ 0.85 (สมเหตุสมผล)
+    </div>
+
+    <!-- Q·Kᵀ Matrix Builder -->
+    <div class="viz-card" id="attn-viz">
+      <div class="vtitle">Q·Kᵀ Matrix Builder — 4 steps</div>
+      <p class="text-xs text-gray-500 mb-3">
+        ใช้ข้อมูลจริงจาก RL model, layer 0, head 0 สำหรับ 4 tokens แรกของ "tesbt"
+      </p>
+      <div class="flex items-center gap-3 mb-3">
+        <label class="text-xs text-gray-600">Step:</label>
+        <input type="range" id="attn-step" min="0" max="3" value="0" class="w-28 accent-purple-600" />
+        <span id="attn-step-label" class="text-xs font-mono font-bold text-purple-700 w-40"></span>
+      </div>
+      <div class="overflow-x-auto">
+        <svg id="attn-matrix" width="340" height="300"></svg>
+      </div>
+      <p id="attn-desc" class="text-xs text-gray-500 mt-2 italic"></p>
+    </div>
+  </section>
+
+  <!-- S4 -->
+  <section class="dd-section" id="s4">
+    <h2 class="dd-h2">4. Causal Mask</h2>
+    <p class="dd-p">
+      ในการ generate แบบ autoregressive token ที่ตำแหน่ง t ต้องไม่เห็น tokens ที่ตำแหน่ง t+1, t+2, ...
+      (ยังไม่ได้ generate ขณะนั้น) — ต้องใส่ causal mask
+    </p>
+
+    <div class="formula-block">
+      <div class="flabel">Causal mask mechanism</div>
+      \[ \text{scores}_{ij} = \begin{cases}
+        Q_i \cdot K_j / \sqrt{d_k} & \text{ถ้า } j \le i \\
+        -\infty & \text{ถ้า } j > i
+      \end{cases} \]
+      หลัง softmax: \( e^{-\infty} = 0 \) → masked positions ให้ attention weight = 0
+    </div>
+
+    <p class="dd-p">
+      ใน PyTorch ใช้ <code>torch.triu(..., diagonal=1).bool()</code> สร้าง upper triangular mask
+      (True = masked) แล้วส่งไปยัง <code>nn.TransformerEncoder</code> ผ่าน <code>mask=</code>
+    </p>
+
+    <div class="worked-example">
+      <div class="welabel">ตัวอย่าง T=4</div>
+      <table class="text-xs font-mono border-collapse mt-1">
+        <thead><tr><th class="p-1 border border-gray-300">i\j</th><th class="p-1 border border-gray-300">0</th><th class="p-1 border border-gray-300">1</th><th class="p-1 border border-gray-300">2</th><th class="p-1 border border-gray-300">3</th></tr></thead>
+        <tbody>
+          <tr><td class="p-1 border border-gray-300">0</td><td class="p-1 border border-gray-300 bg-green-100">✓</td><td class="p-1 border border-gray-300 bg-gray-200">−∞</td><td class="p-1 border border-gray-300 bg-gray-200">−∞</td><td class="p-1 border border-gray-300 bg-gray-200">−∞</td></tr>
+          <tr><td class="p-1 border border-gray-300">1</td><td class="p-1 border border-gray-300 bg-green-100">✓</td><td class="p-1 border border-gray-300 bg-green-100">✓</td><td class="p-1 border border-gray-300 bg-gray-200">−∞</td><td class="p-1 border border-gray-300 bg-gray-200">−∞</td></tr>
+          <tr><td class="p-1 border border-gray-300">2</td><td class="p-1 border border-gray-300 bg-green-100">✓</td><td class="p-1 border border-gray-300 bg-green-100">✓</td><td class="p-1 border border-gray-300 bg-green-100">✓</td><td class="p-1 border border-gray-300 bg-gray-200">−∞</td></tr>
+          <tr><td class="p-1 border border-gray-300">3</td><td class="p-1 border border-gray-300 bg-green-100">✓</td><td class="p-1 border border-gray-300 bg-green-100">✓</td><td class="p-1 border border-gray-300 bg-green-100">✓</td><td class="p-1 border border-gray-300 bg-green-100">✓</td></tr>
+        </tbody>
+      </table>
+      <p class="mt-1">N=4: masked pairs = C(4,2) = <strong>6</strong> (upper triangle ไม่รวม diagonal)</p>
+    </div>
+  </section>
+
+  <!-- S5 -->
+  <section class="dd-section" id="s5">
+    <h2 class="dd-h2">5. Multi-Head Attention</h2>
+    <p class="dd-p">
+      แทนที่จะทำ attention ครั้งเดียวบน d_model=256 dimensions เราแยก 8 "heads"
+      แต่ละ head มี d_k = 256/8 = 32 dimensions — ให้โมเดลมองคนละ "side" ของ representation
+    </p>
+    <div class="formula-block">
+      \[ \text{MultiHead}(X) = \text{Concat}(\text{head}_1, \ldots, \text{head}_h) \cdot W_O \]
+      \[ \text{head}_i = \text{Attention}(XW_Q^i, XW_K^i, XW_V^i) \]
+      <div class="text-xs text-gray-500 mt-1">W_O ∈ ℝ^(d_model × d_model) — merge all heads back</div>
+    </div>
+
+    <!-- Multi-head split SVG -->
+    <div class="viz-card">
+      <div class="vtitle">Multi-head split: d_model=256 → 8 heads × 32 dims</div>
+      <svg width="100%" viewBox="0 0 500 80">
+        <rect x="5" y="20" width="490" height="40" rx="4" fill="#ede9fe" stroke="#7c3aed" stroke-width="1.5"/>
+        <text x="250" y="27" text-anchor="middle" font-size="9" fill="#7c3aed" font-weight="700">d_model = 256 dimensions</text>
+        <script type="text/javascript">/* SVG script not supported, using static elements */</script>
+        <!-- 8 colored bands -->
+        <rect x="5" y="35" width="61" height="22" rx="2" fill="#dbeafe" stroke="#3b82f6" stroke-width="1"/>
+        <text x="36" y="50" text-anchor="middle" font-size="8" fill="#1d4ed8">head 1 (32)</text>
+        <rect x="67" y="35" width="61" height="22" rx="2" fill="#dcfce7" stroke="#16a34a" stroke-width="1"/>
+        <text x="98" y="50" text-anchor="middle" font-size="8" fill="#166534">head 2 (32)</text>
+        <rect x="129" y="35" width="61" height="22" rx="2" fill="#fef9c3" stroke="#ca8a04" stroke-width="1"/>
+        <text x="160" y="50" text-anchor="middle" font-size="8" fill="#713f12">head 3 (32)</text>
+        <rect x="191" y="35" width="61" height="22" rx="2" fill="#fce7f3" stroke="#db2777" stroke-width="1"/>
+        <text x="222" y="50" text-anchor="middle" font-size="8" fill="#9d174d">head 4 (32)</text>
+        <rect x="253" y="35" width="61" height="22" rx="2" fill="#e0f2fe" stroke="#0284c7" stroke-width="1"/>
+        <text x="284" y="50" text-anchor="middle" font-size="8" fill="#075985">head 5 (32)</text>
+        <rect x="315" y="35" width="61" height="22" rx="2" fill="#f0fdf4" stroke="#15803d" stroke-width="1"/>
+        <text x="346" y="50" text-anchor="middle" font-size="8" fill="#14532d">head 6 (32)</text>
+        <rect x="377" y="35" width="61" height="22" rx="2" fill="#fff7ed" stroke="#ea580c" stroke-width="1"/>
+        <text x="408" y="50" text-anchor="middle" font-size="8" fill="#7c2d12">head 7 (32)</text>
+        <rect x="439" y="35" width="56" height="22" rx="2" fill="#f5f3ff" stroke="#7c3aed" stroke-width="1"/>
+        <text x="467" y="50" text-anchor="middle" font-size="8" fill="#4c1d95">head 8 (32)</text>
+      </svg>
+      <p class="text-xs text-gray-500 mt-1">หลัง concat(8 heads) = 256 dims → ×W_O → กลับเป็น 256</p>
+    </div>
+  </section>
+
+  <!-- S6 -->
+  <section class="dd-section" id="s6">
+    <h2 class="dd-h2">6. Positional Encoding</h2>
+    <p class="dd-p">
+      Self-attention ไม่มีแนวคิดของ "ตำแหน่ง" — ถ้า shuffle tokens ผล attention เหมือนเดิม
+      ต้องเพิ่ม positional information ด้วย sinusoidal encoding:
+    </p>
+    <div class="formula-block">
+      <div class="flabel">Sinusoidal PE</div>
+      \[ PE(pos, 2i) = \sin\!\left(\frac{pos}{10000^{2i/d}}\right) \]
+      \[ PE(pos, 2i+1) = \cos\!\left(\frac{pos}{10000^{2i/d}}\right) \]
+    </div>
+
+    <p class="dd-p">ทำไม sin/cos? เพราะ PE(pos+k) เป็น linear transformation ของ PE(pos):</p>
+    <div class="proof-box"><span class="ptitle">Proof — relative position encodable</span>
+ให้ ω = 1/10000^(2i/d), PE(pos) = [sin(ωpos), cos(ωpos)]
+
+PE(pos+k) = [sin(ω(pos+k)), cos(ω(pos+k))]
+           = [sin(ωpos)cos(ωk) + cos(ωpos)sin(ωk),
+              cos(ωpos)cos(ωk) − sin(ωpos)sin(ωk)]
+
+เขียนเป็น matrix:
+  PE(pos+k) = R(ωk) · PE(pos)  โดย R = rotation matrix
+
+→ model สามารถเรียนรู้ relative position ผ่าน linear layer บน PE</div>
+
+    <div class="worked-example">
+      <div class="welabel">ตัวอย่าง: PE(0) vs PE(1) — dimension 0-1</div>
+      ω = 1/10000^0 = 1.0<br />
+      PE(0, 0) = sin(0) = 0.000<br />
+      PE(0, 1) = cos(0) = 1.000<br />
+      PE(1, 0) = sin(1) ≈ 0.841<br />
+      PE(1, 1) = cos(1) ≈ 0.540
+    </div>
+  </section>
+
+  <!-- S7 -->
+  <section class="dd-section" id="s7">
+    <h2 class="dd-h2">7. Code — PositionalEncoding และ MiniGPT.forward</h2>
+
+    <h3 class="dd-h3">model.py:9–25 — PositionalEncoding</h3>
+    <pre class="code-block"><code><span class="line-num"> 9</span><span class="kw">class</span> <span class="fn">PositionalEncoding</span>(nn.Module):
+<span class="line-num">10</span>    <span class="kw">def</span> <span class="fn">__init__</span>(self, d_model, max_len=<span class="nm">256</span>):
+<span class="line-num">11</span>        <span class="kw">super</span>().__init__()
+<span class="line-num">12</span>        pe = torch.zeros(max_len, d_model)
+<span class="line-num">13</span>        position = torch.arange(<span class="nm">0</span>, max_len).unsqueeze(<span class="nm">1</span>).float()
+<span class="line-num">14</span>
+<span class="line-num">15</span>        div_term = torch.exp(
+<span class="line-num">16</span>            torch.arange(<span class="nm">0</span>, d_model, <span class="nm">2</span>).float() * (-math.log(<span class="nm">10000.0</span>) / d_model)
+<span class="line-num">17</span>        )
+<span class="line-num">18</span>
+<span class="line-num">19</span>        pe[:, <span class="nm">0</span>::<span class="nm">2</span>] = torch.sin(position * div_term)
+<span class="line-num">20</span>        pe[:, <span class="nm">1</span>::<span class="nm">2</span>] = torch.cos(position * div_term)
+<span class="line-num">21</span>        pe = pe.unsqueeze(<span class="nm">0</span>)
+<span class="line-num">22</span>        self.register_buffer(<span class="st">"pe"</span>, pe)
+<span class="line-num">23</span>
+<span class="line-num">24</span>    <span class="kw">def</span> <span class="fn">forward</span>(self, x):
+<span class="line-num">25</span>        <span class="kw">return</span> x + self.pe[:, : x.size(<span class="nm">1</span>)]</code></pre>
+
+    <div class="annotation-box">
+      <div class="ann-label">ทำไม</div>
+      line 16: <code>div_term</code> คำนวณ 1/10000^(2i/d) ใน <em>log-space</em>
+      (<code>torch.exp(arange × (−log10000/d))</code>)
+      เพื่อ numerical stability — ป้องกัน overflow สำหรับ d_model ใหญ่<br /><br />
+      line 22: <code>register_buffer("pe", ...)</code> ทำให้ pe ไม่ใช่ learnable parameter
+      (ไม่อยู่ใน <code>model.parameters()</code>) แต่ยังคง move to device พร้อม <code>model.to(device)</code>
+    </div>
+
+    <h3 class="dd-h3">model.py:53–66 — MiniGPT.forward</h3>
+    <pre class="code-block"><code><span class="line-num">53</span>    <span class="kw">def</span> <span class="fn">forward</span>(self, x, pad_mask=<span class="kw">None</span>):
+<span class="line-num">54</span>        _, T = x.shape
+<span class="line-num">55</span>        causal_mask = torch.triu(torch.ones(T, T, device=x.device), diagonal=<span class="nm">1</span>).bool()
+<span class="line-num">56</span>
+<span class="line-num">57</span>        h = self.token_emb(x)
+<span class="line-num">58</span>        h = self.pos_emb(h)
+<span class="line-num">59</span>
+<span class="line-num">60</span>        h = self.transformer(
+<span class="line-num">61</span>            h,
+<span class="line-num">62</span>            mask=causal_mask,
+<span class="line-num">63</span>            src_key_padding_mask=pad_mask,
+<span class="line-num">64</span>        )
+<span class="line-num">65</span>
+<span class="line-num">66</span>        <span class="kw">return</span> self.lm_head(h)</code></pre>
+
+    <div class="annotation-box">
+      <div class="ann-label">ทำไม</div>
+      line 55: <code>torch.triu(..., diagonal=1).bool()</code> สร้าง upper triangular mask
+      (True = blocked) — <code>diagonal=1</code> ทำให้ diagonal หลัก (i=j) ไม่ถูก mask
+      (token เห็นตัวเอง)<br /><br />
+      <code>mask=causal_mask</code> ส่งเป็น mask ร่วมกัน <em>ทุก sample ใน batch</em>
+      (causal constraint เหมือนกันทุก sequence),
+      แต่ <code>src_key_padding_mask=pad_mask</code> ส่งแยก <em>per-sample</em>
+      เพราะแต่ละ sample มี PAD positions ต่างกัน
+    </div>
+  </section>
+
+  <!-- S8 -->
+  <section class="dd-section" id="s8">
+    <h2 class="dd-h2">8. Stop &amp; Check</h2>
+    <div class="check-section">
+      <div class="ctitle">ทดสอบความเข้าใจ</div>
+
+      <p class="text-sm font-semibold mb-1">Q1: Sequence ยาว 8 tokens มีกี่ pair (i,j) ที่ถูก mask?</p>
+      <details class="check-details mb-3">
+        <summary>เฉลย</summary>
+        <div class="answer">
+          Upper triangle ไม่รวม diagonal = n(n−1)/2 = 8×7/2 = <strong>28</strong> pairs<br />
+          หรือ C(8,2) = 28
+        </div>
+      </details>
+
+      <p class="text-sm font-semibold mb-1">Q2: ถ้า d_k = 64 scale factor คือเท่าไร?</p>
+      <details class="check-details mb-3">
+        <summary>เฉลย</summary>
+        <div class="answer">
+          1/√64 = 1/8 = <strong>0.125</strong><br />
+          เทียบกับ d_k=32: 1/√32 ≈ 0.177
+        </div>
+      </details>
+
+      <p class="text-sm font-semibold mb-1">Q3: ทำไม PE ถึงใช้ sin สำหรับ even dims และ cos สำหรับ odd dims?</p>
+      <details class="check-details">
+        <summary>เฉลย</summary>
+        <div class="answer">
+          sin/cos ต่าง phase 90° — แต่ละ pair (sin, cos) encode direction ในวงกลม 2D<br />
+          ผลคือ PE(pos+k) = R(k)·PE(pos) โดย R เป็น rotation matrix<br />
+          → model สามารถเรียนรู้ relative position ผ่าน linear layer
+        </div>
+      </details>
+    </div>
+  </section>
+
+  <div class="dd-prev-next">
+    <a href="./index.html">← Deep Dive Hub</a>
+    <a href="./02-sft.html">02: SFT →</a>
+  </div>
+</main>
+</div>
+
+<!-- Data -->
+<script src="../data/attention_weights_tesbt.js"></script>
+
+<script>
+// ── Q·Kᵀ Matrix Builder ──────────────────────────────────────────────────────
+(function () {
+  var NS = 'http://www.w3.org/2000/svg';
+  var TOKENS_4 = ['<BOS>', 't', 'e', 's'];
+  var CELL = 62, LABEL_W = 50, LABEL_H = 30, PAD = 10;
+  var steps = ['raw QKᵀ (simulated)', 'scaled ÷ √32', 'after causal mask', 'after softmax (actual)'];
+  var descs = [
+    'Raw dot products Q·Kᵀ — ยังไม่ได้ scale, มีทั้ง positive และ negative',
+    'หารด้วย √32 ≈ 0.177 → ค่า magnitude ลดลง, softmax จะไม่ saturate',
+    'Upper triangle = −1e9 → หลัง softmax จะกลายเป็น 0 (causal constraint)',
+    'หลัง softmax: แต่ละแถว sum to 1; upper triangle ≈ 0 (masked)'
+  ];
+
+  // Simulated raw QKᵀ values (plausible for a trained model)
+  var RAW = [
+    [1.8, -0.3, 0.7, -1.1],
+    [0.5,  2.1, 0.3,  0.6],
+    [-0.4, 0.8, 1.9, -0.2],
+    [0.2,  0.4, 0.6,  2.3]
+  ];
+  var SCALE = RAW.map(function(row) { return row.map(function(v) { return +(v*0.177).toFixed(3); }); });
+  var MASKED_RAW = SCALE.map(function(row, i) {
+    return row.map(function(v, j) { return j > i ? null : v; });
+  });
+  function softmax(arr) {
+    var max = Math.max.apply(null, arr.filter(function(v){return v!==null;}).map(Number));
+    var exps = arr.map(function(v) { return v === null ? 0 : Math.exp(v - max); });
+    var sum = exps.reduce(function(a,b){return a+b;}, 0);
+    return arr.map(function(v, i) { return v === null ? null : +(exps[i]/sum).toFixed(3); });
+  }
+  var SOFTMAX_SIM = MASKED_RAW.map(function(row) { return softmax(row); });
+
+  // Load real softmax from data if available
+  var SOFTMAX_REAL = null;
+  if (window.DATA_ATTENTION_WEIGHTS) {
+    try {
+      var layer0 = window.DATA_ATTENTION_WEIGHTS.layers[0].weights_per_head[0];
+      SOFTMAX_REAL = layer0.slice(0, 4).map(function(row) {
+        return row.slice(0, 4).map(function(v, j, arr2) {
+          // Apply causal mask semantics: upper triangle = 0
+          return j > arr2.indexOf(v) ? null : +v.toFixed(3);
+        });
+      });
+      // Actually just use first 4×4 as-is (already softmax output from model)
+      SOFTMAX_REAL = layer0.slice(0, 4).map(function(row) {
+        return row.slice(0, 4).map(function(v) { return +v.toFixed(3); });
+      });
+    } catch(e) {}
+  }
+
+  var MATRICES = [RAW, SCALE, MASKED_RAW, SOFTMAX_REAL || SOFTMAX_SIM];
+
+  function colorForValue(v, step) {
+    if (v === null) return '#e5e7eb';
+    if (step < 2) {
+      // diverging: blue for negative, green for positive
+      if (v < 0) {
+        var intensity = Math.min(Math.abs(v) / 3, 1);
+        var g = Math.round(200 - intensity * 100);
+        return 'rgb(150,' + g + ',255)';
+      } else {
+        var intensity2 = Math.min(v / 3, 1);
+        var r = Math.round(200 - intensity2 * 100);
+        return 'rgb(' + r + ',200,150)';
+      }
+    } else {
+      // 0→1 range: blue→green
+      var t = Math.min(Math.max(v, 0), 1);
+      var r2 = Math.round(219 - t * 100);
+      var g2 = Math.round(170 + t * 60);
+      var b2 = Math.round(255 - t * 200);
+      return 'rgb(' + r2 + ',' + g2 + ',' + b2 + ')';
+    }
+  }
+
+  function renderMatrix(stepIdx) {
+    var svg = document.getElementById('attn-matrix');
+    svg.innerHTML = '';
+    var mat = MATRICES[stepIdx];
+    var W = LABEL_W + 4 * CELL + PAD;
+    var H = LABEL_H + 4 * CELL + PAD;
+    svg.setAttribute('width', W);
+    svg.setAttribute('height', H);
+
+    // Column labels (tokens)
+    TOKENS_4.forEach(function(tok, j) {
+      var tx = document.createElementNS(NS, 'text');
+      tx.setAttribute('x', LABEL_W + j * CELL + CELL / 2);
+      tx.setAttribute('y', LABEL_H - 8);
+      tx.setAttribute('text-anchor', 'middle');
+      tx.setAttribute('font-size', '11');
+      tx.setAttribute('fill', '#6b7280');
+      tx.textContent = tok;
+      svg.appendChild(tx);
+    });
+    // Row labels
+    TOKENS_4.forEach(function(tok, i) {
+      var ty = document.createElementNS(NS, 'text');
+      ty.setAttribute('x', LABEL_W - 4);
+      ty.setAttribute('y', LABEL_H + i * CELL + CELL / 2 + 4);
+      ty.setAttribute('text-anchor', 'end');
+      ty.setAttribute('font-size', '11');
+      ty.setAttribute('fill', '#6b7280');
+      ty.textContent = tok;
+      svg.appendChild(ty);
+    });
+
+    // Cells
+    mat.forEach(function(row, i) {
+      row.forEach(function(v, j) {
+        var rect = document.createElementNS(NS, 'rect');
+        rect.setAttribute('x', LABEL_W + j * CELL);
+        rect.setAttribute('y', LABEL_H + i * CELL);
+        rect.setAttribute('width', CELL - 2);
+        rect.setAttribute('height', CELL - 2);
+        rect.setAttribute('rx', '4');
+        rect.setAttribute('fill', colorForValue(v, stepIdx));
+        svg.appendChild(rect);
+
+        var tx = document.createElementNS(NS, 'text');
+        tx.setAttribute('x', LABEL_W + j * CELL + CELL / 2);
+        tx.setAttribute('y', LABEL_H + i * CELL + CELL / 2 + 4);
+        tx.setAttribute('text-anchor', 'middle');
+        tx.setAttribute('font-size', '10');
+        tx.setAttribute('fill', v === null ? '#9ca3af' : '#1a1a2e');
+        tx.textContent = v === null ? '−∞' : v;
+        svg.appendChild(tx);
+      });
+    });
+
+    document.getElementById('attn-step-label').textContent = steps[stepIdx];
+    document.getElementById('attn-desc').textContent = descs[stepIdx];
+  }
+
+  document.getElementById('attn-step').addEventListener('input', function() {
+    renderMatrix(parseInt(this.value));
+  });
+  renderMatrix(0);
+})();
+
+// ── Scroll spy ────────────────────────────────────────────────────────────────
+(function() {
+  var ids = ['s1','s2','s3','s4','s5','s6','s7','s8'];
+  if (!('IntersectionObserver' in window)) return;
+  var visible = {};
+  var obs = new IntersectionObserver(function(entries) {
+    entries.forEach(function(e) { visible[e.target.id] = e.intersectionRatio; });
+    var best = null, bestR = 0;
+    ids.forEach(function(id) { var r=visible[id]||0; if(r>bestR){bestR=r;best=id;} });
+    if (!best) return;
+    document.querySelectorAll('#left-rail a[href]').forEach(function(a) {
+      a.classList.toggle('active', a.getAttribute('href') === '#'+best);
+    });
+  }, { threshold: [0.1, 0.5] });
+  ids.forEach(function(id) { var el=document.getElementById(id); if(el) obs.observe(el); });
+})();
+</script>
+
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"></script>
+<script>
+  renderMathInElement(document.body, {
+    delimiters: [
+      {left:'\\[', right:'\\]', display:true},
+      {left:'\\(', right:'\\)', display:false}
+    ],
+    throwOnError: false
+  });
+</script>
+</body>
+</html>

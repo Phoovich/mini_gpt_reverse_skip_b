@@ -1,0 +1,627 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MiniGPT Reverse-Skip-B — คู่มือ Interactive</title>
+  <script>
+    tailwind = { config: { theme: { extend: {} } } };
+  </script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+
+<!-- ── Navigation dots ────────────────────────────────────────────────────── -->
+<nav id="site-nav" aria-label="ไปยัง section">
+  <div class="nav-dot-wrap"><button class="nav-dot active" data-target="section-hook"      title="Hook"></button><span class="nav-dot-label">โมเดลนี้ทำอะไรได้?</span></div>
+  <div class="nav-dot-wrap"><button class="nav-dot"        data-target="section-tokenizer" title="Tokenizer"></button><span class="nav-dot-label">Tokenization</span></div>
+  <div class="nav-dot-wrap"><button class="nav-dot"        data-target="section-arch"      title="Transformer"></button><span class="nav-dot-label">ภายใน Transformer</span></div>
+  <div class="nav-dot-wrap"><button class="nav-dot"        data-target="section-sft"       title="SFT"></button><span class="nav-dot-label">ขั้นที่ 1: SFT</span></div>
+  <div class="nav-dot-wrap"><button class="nav-dot"        data-target="section-rl"        title="RL"></button><span class="nav-dot-label">ขั้นที่ 2: RL</span></div>
+  <div class="nav-dot-wrap"><button class="nav-dot"        data-target="section-reward"    title="Reward"></button><span class="nav-dot-label">ฟังก์ชันรางวัล</span></div>
+  <div class="nav-dot-wrap"><button class="nav-dot"        data-target="section-results"   title="Results"></button><span class="nav-dot-label">ผลการทดลอง</span></div>
+  <div class="nav-dot-wrap"><button class="nav-dot"        data-target="section-recap"     title="Recap"></button><span class="nav-dot-label">สรุป</span></div>
+</nav>
+
+<main>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<!-- Section 1 — Hook                                                       -->
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<section id="section-hook" class="section-container">
+  <div class="section-inner">
+    <h2 class="section-title">โมเดลนี้ทำอะไรได้? <span class="section-subtitle">/ What does this model do?</span></h2>
+
+    <div class="analogy-card">
+      เหมือนเกมกลับคำ (sequence reversal) แต่มีกฎพิเศษว่าห้ามให้ตัว "b" อยู่ใน output —
+      โมเดลเรียนรู้กฎนี้เองจากการลองผิดลองถูกนับหมื่นครั้ง
+    </div>
+
+    <div class="widget-card">
+      <div class="flex flex-wrap items-center gap-2 mb-3">
+        <input id="hook-input" type="text" maxlength="14"
+          class="border border-gray-300 rounded-md px-3 py-2 text-sm font-mono w-36 focus:outline-none focus:border-green-500"
+          placeholder="เช่น tesbt" autocomplete="off" spellcheck="false" />
+        <button id="hook-run"   class="btn-primary">▶ Run</button>
+        <button id="hook-reset" class="btn-secondary">↺ Reset</button>
+      </div>
+      <div id="hook-presets" class="flex flex-wrap gap-2 mb-5"></div>
+
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
+        <div>
+          <p class="text-xs font-semibold text-gray-500 mb-2 uppercase tracking-wide">
+            SFT — กลับลำดับอย่างเดียว
+          </p>
+          <div id="hook-sft-tokens" class="token-row min-h-10"></div>
+        </div>
+        <div>
+          <p class="text-xs font-semibold text-gray-500 mb-2 uppercase tracking-wide">
+            RL — กลับลำดับ + ตัด "b"
+          </p>
+          <div id="hook-rl-tokens" class="token-row min-h-10"></div>
+        </div>
+      </div>
+      <p id="hook-status" class="text-sm text-gray-500 mt-3 italic"></p>
+    </div>
+
+    <div class="info-card mt-4">
+      <p class="text-sm">
+        โมเดลนี้คือ <strong>MiniGPT</strong> — Transformer Decoder ขนาดเล็ก <strong>2.1M parameters</strong>
+        ฝึกด้วย 2 ขั้นตอน: <strong>SFT</strong> เรียนรู้การกลับลำดับ (sequence reversal)
+        จากนั้น fine-tune ด้วย <strong>RL (GRPO)</strong> เพื่อข้ามตัวอักษร "b" ใน output
+      </p>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<!-- Section 2 — Tokenizer                                                  -->
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<section id="section-tokenizer" class="section-container">
+  <div class="section-inner">
+    <h2 class="section-title">การ Tokenize / <span class="section-subtitle">Tokenization</span></h2>
+
+    <div class="analogy-card">
+      เหมือนแปลงตัวอักษรเป็นรหัสเลขก่อนส่งให้คอมพิวเตอร์ —
+      ตัว "a" คือ 4, "z" คือ 29 และมี 4 รหัสพิเศษ (special tokens) สำหรับขึ้นต้น แบ่ง สิ้นสุด และ padding
+    </div>
+
+    <div class="widget-card">
+      <div class="flex flex-wrap items-center gap-2 mb-4">
+        <input id="tok-input" type="text" maxlength="12"
+          class="border border-gray-300 rounded-md px-3 py-2 text-sm font-mono w-36 focus:outline-none focus:border-blue-500"
+          placeholder="พิมพ์คำ" autocomplete="off" spellcheck="false" value="hello" />
+        <button class="btn-preset" data-word="hello">hello</button>
+        <button class="btn-preset" data-word="tesbt">tesbt</button>
+        <button class="btn-preset" data-word="banana">banana</button>
+        <button id="tok-reset" class="btn-secondary">↺</button>
+      </div>
+
+      <p class="text-xs text-gray-500 font-semibold uppercase tracking-wide mb-2">Token IDs</p>
+      <div id="tok-boxes" class="token-row mb-5"></div>
+
+      <p class="text-xs text-gray-500 font-semibold uppercase tracking-wide mb-2">
+        รูปแบบ sequence สำหรับ training
+      </p>
+      <div id="tok-sequence" class="token-row mb-1"></div>
+      <p id="tok-seq-label" class="text-xs text-gray-400 mb-4"></p>
+    </div>
+
+    <div class="mt-5">
+      <p class="text-sm font-semibold text-gray-600 mb-2">Vocabulary ทั้งหมด 30 tokens</p>
+      <div id="tok-vocab-grid" class="vocab-grid"></div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<!-- Section 3 — Architecture                                               -->
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<section id="section-arch" class="section-container">
+  <div class="section-inner">
+    <h2 class="section-title">ภายใน Transformer / <span class="section-subtitle">Inside the Transformer</span></h2>
+
+    <div class="analogy-card">
+      Causal mask เหมือนกระดาษปิดข้อสอบ — แต่ละตำแหน่ง (position) ดูได้เฉพาะ token ที่ผ่านมาแล้ว
+      ดูข้างหน้าไม่ได้ เพราะตอน generate จริงๆ ข้างหน้ายังไม่มีอยู่
+    </div>
+
+    <a href="deep-dive/01-attention.html" class="deep-dive-link">เจาะลึก → Transformer &amp; Attention internals</a>
+
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+      <!-- Causal mask widget -->
+      <div class="widget-card">
+        <p class="text-sm font-semibold mb-3">
+          Causal Mask — แต่ละแถวคือ 1 token, สีเขียว = มองเห็น, สีเทา = ถูก mask
+        </p>
+        <div class="flex items-center gap-3 mb-3">
+          <label class="text-xs text-gray-600">ความยาว N:</label>
+          <input type="range" id="mask-length-slider" min="4" max="9" value="7"
+            class="w-24 accent-green-600" />
+          <span id="mask-length-val" class="text-sm font-mono font-bold text-green-700">7</span>
+          <button id="mask-reset" class="btn-secondary text-xs px-2 py-1">↺</button>
+        </div>
+        <div class="overflow-x-auto">
+          <svg id="causal-mask-svg"></svg>
+        </div>
+        <p id="mask-tooltip" class="text-xs text-gray-500 mt-2 min-h-4 italic"></p>
+      </div>
+
+      <!-- Architecture stack -->
+      <div>
+        <p class="text-sm font-semibold mb-3">โครงสร้างโมเดล MiniGPT (2.1M parameters)</p>
+        <div id="arch-stack"></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<!-- Section 4 — SFT                                                        -->
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<section id="section-sft" class="section-container">
+  <div class="section-inner">
+    <h2 class="section-title">ขั้นที่ 1: การฝึกแบบ SFT / <span class="section-subtitle">Supervised Fine-Tuning</span></h2>
+
+    <div class="analogy-card">
+      Teacher forcing เหมือนครูบอกคำตอบที่ถูกต้องทีละขั้น แล้วให้โมเดลเดาคำถัดไป —
+      ถ้าเดาผิดก็ถูกหักคะแนน (cross-entropy loss) ทันที
+    </div>
+
+    <a href="deep-dive/02-sft.html" class="deep-dive-link">เจาะลึก → SFT &amp; Teacher Forcing</a>
+
+    <!-- Stepper -->
+    <div class="widget-card mb-5">
+      <p class="text-sm font-semibold mb-3">
+        Teacher Forcing — โมเดลเห็น token ที่ถูกต้องเสมอระหว่างการฝึก (ไม่ใช่ output ของตัวเอง)
+      </p>
+      <div id="sft-stepper-seq" class="stepper-seq mb-3"></div>
+      <div id="sft-stepper-predict" class="stepper-predict text-sm"></div>
+      <div class="flex flex-wrap gap-2 mt-2">
+        <button id="sft-prev"     class="btn-secondary text-xs px-3">◀ ก่อนหน้า</button>
+        <button id="sft-next"     class="btn-primary   text-xs px-3">ถัดไป ▶</button>
+        <button id="sft-autoplay" class="btn-secondary text-xs px-3">▶▶ Auto-play</button>
+        <button id="sft-reset"    class="btn-secondary text-xs px-3">↺</button>
+      </div>
+    </div>
+
+    <!-- CE Loss visualizer -->
+    <div class="widget-card mb-5">
+      <p class="text-sm font-semibold mb-3">
+        Cross-Entropy Loss — ยิ่งโมเดลมั่นใจในคำตอบที่ถูก → loss ต่ำ
+      </p>
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div>
+          <label class="text-xs text-gray-600 block mb-1">
+            P(token ที่ถูกต้อง): <span id="ce-p-val" class="font-mono font-bold text-green-700">0.80</span>
+          </label>
+          <input type="range" id="ce-slider" min="1" max="99" value="80"
+            class="w-full accent-green-600 mb-3" />
+          <div class="text-xs text-gray-600 mb-1">Probability distribution (30 tokens)</div>
+          <canvas id="ce-canvas" width="260" height="70"
+            class="border border-gray-200 rounded bg-white w-full"></canvas>
+        </div>
+        <div class="flex flex-col justify-center">
+          <div class="bg-gray-50 rounded-lg p-4 font-mono text-sm">
+            <div class="text-gray-500 text-xs mb-1">สูตร:</div>
+            <div class="text-blue-700 font-bold mb-2">loss = −log(P(correct))</div>
+            <div id="ce-formula" class="text-lg font-bold"></div>
+          </div>
+          <p id="ce-verdict" class="text-xs text-gray-600 mt-3 italic"></p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Training config -->
+    <div class="info-card">
+      <p class="text-sm font-semibold mb-2">ค่า config การฝึก SFT</p>
+      <div class="grid grid-cols-2 md:grid-cols-3 gap-x-8 gap-y-1 text-sm">
+        <div><span class="text-gray-500">Samples:</span> <span class="font-mono">50,000</span></div>
+        <div><span class="text-gray-500">Batch:</span> <span class="font-mono">64</span></div>
+        <div><span class="text-gray-500">Epochs:</span> <span class="font-mono">40</span></div>
+        <div><span class="text-gray-500">LR:</span> <span class="font-mono">3×10⁻⁴</span></div>
+        <div><span class="text-gray-500">Optimizer:</span> <span class="font-mono">AdamW</span></div>
+        <div><span class="text-gray-500">Scheduler:</span> <span class="font-mono">ReduceLR(p=2)</span></div>
+        <div><span class="text-gray-500">Grad clip:</span> <span class="font-mono">1.0</span></div>
+        <div><span class="text-gray-500">Checkpoint:</span> <span class="font-mono">best val_loss</span></div>
+      </div>
+      <p class="text-xs text-gray-500 mt-2">
+        ผลลัพธ์: SFT เรียนรู้การ reverse ได้ดี แต่ยังไม่รู้จัก skip-b —
+        in-dist exact_match (vs skip-b target) = <strong>22.80%</strong>
+        เนื่องจาก 30% ของ test set ไม่มีตัว b อยู่เดิม
+      </p>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<!-- Section 5 — RL / GRPO                                                  -->
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<section id="section-rl" class="section-container">
+  <div class="section-inner">
+    <h2 class="section-title">ขั้นที่ 2: การ Fine-tune ด้วย RL / <span class="section-subtitle">Reinforcement Learning (GRPO)</span></h2>
+
+    <div class="analogy-card">
+      SFT เหมือนสอนด้วยหนังสือตำรา — ถ้ากฎไม่อยู่ใน training label สอนไม่ได้
+      GRPO เหมือนสอนด้วยระบบให้คะแนน — ลองผิดลองถูกจนค้นพบกฎ "ตัด b" เอง โดยไม่ต้องมี value network
+    </div>
+
+    <a href="deep-dive/03-grpo.html" class="deep-dive-link">เจาะลึก → Policy Gradient &amp; GRPO</a>
+
+    <!-- Decoder animation -->
+    <div class="widget-card mb-5">
+      <p class="text-sm font-semibold mb-1">
+        การ generate ทีละ token (greedy decoding) — input: <span class="font-mono font-bold">"tesbt"</span>
+      </p>
+      <p class="text-xs text-gray-500 mb-3">SFT ใส่ตัว b ไว้ใน output, RL ข้ามมันไป</p>
+
+      <div class="flex flex-col md:flex-row gap-4 mb-4" id="decoder-cols">
+        <div class="decoder-col">
+          <div class="decoder-label text-blue-700">SFT</div>
+          <div id="dec-sft-tokens" class="decoder-tokens mb-2"></div>
+          <div id="dec-sft-bars" class="prob-bar-wrap"></div>
+        </div>
+        <div class="w-px bg-gray-200 hidden md:block"></div>
+        <div class="decoder-col">
+          <div class="decoder-label text-green-700">RL</div>
+          <div id="dec-rl-tokens" class="decoder-tokens mb-2"></div>
+          <div id="dec-rl-bars" class="prob-bar-wrap"></div>
+        </div>
+      </div>
+
+      <div class="flex flex-wrap gap-2 items-center">
+        <button id="dec-play"  class="btn-primary text-xs px-3">▶ Play</button>
+        <button id="dec-step"  class="btn-secondary text-xs px-3">⏭ Step</button>
+        <button id="dec-reset" class="btn-secondary text-xs px-3">↺ Reset</button>
+        <label class="text-xs text-gray-600 ml-2">Speed:</label>
+        <select id="dec-speed" class="border border-gray-200 rounded text-xs px-2 py-1 font-mono">
+          <option value="1200">0.5×</option>
+          <option value="700" selected>1×</option>
+          <option value="350">2×</option>
+        </select>
+        <span id="dec-status" class="text-xs text-gray-400 italic ml-2"></span>
+      </div>
+    </div>
+
+    <!-- GRPO rollout -->
+    <div class="widget-card mb-5">
+      <p class="text-sm font-semibold mb-1">GRPO — Group Relative Policy Optimization</p>
+      <p class="text-xs text-gray-500 mb-3">
+        ต่อ 1 prompt สุ่ม output 4 ครั้ง → คำนวณ advantage ภายใน group —
+        ไม่ต้องมี value network แยกต่างหาก
+      </p>
+      <div id="grpo-stage-0" class="grpo-stage">
+        <div class="text-center py-4">
+          <div class="inline-block bg-blue-100 border-2 border-blue-400 rounded-lg px-6 py-3 font-mono font-bold text-blue-800 text-lg">
+            "bomb" → target: "mo"
+          </div>
+          <p class="text-xs text-gray-500 mt-2">กด "ถัดไป" เพื่อดูการ rollout</p>
+        </div>
+      </div>
+      <div id="grpo-stage-1" class="grpo-stage hidden">
+        <p class="text-xs font-semibold text-gray-500 mb-2">4 rollouts จาก policy ปัจจุบัน (stochastic sampling)</p>
+        <div id="grpo-rollout-grid" class="rollout-grid"></div>
+      </div>
+      <div id="grpo-stage-2" class="grpo-stage hidden">
+        <div id="grpo-stage-1-copy"></div>
+        <div class="bg-gray-50 rounded-lg p-3 mt-3 text-sm">
+          <div class="font-mono text-xs text-gray-600 mb-2">
+            group_mean = <strong id="grpo-mean"></strong> &nbsp;|&nbsp;
+            group_std = <strong id="grpo-std"></strong>
+          </div>
+          <p class="text-xs font-semibold text-gray-500 mb-2">
+            Advantage A<sub>i</sub> = (r<sub>i</sub> − r̄) / (σ + ε)
+          </p>
+          <div id="grpo-adv-rows"></div>
+        </div>
+      </div>
+      <div id="grpo-stage-3" class="grpo-stage hidden">
+        <div class="bg-green-50 border border-green-200 rounded-lg p-3 text-sm text-green-800">
+          <strong>Policy update:</strong> rollout ที่มี advantage สูง (ถูกต้อง ไม่มี b)
+          จะถูก reinforce ให้มีโอกาสเกิดขึ้นมากขึ้น —
+          rollout ที่มีตัว b จะถูก discourage
+        </div>
+      </div>
+      <div class="flex gap-2 mt-3">
+        <button id="grpo-next"  class="btn-primary text-xs px-3">ถัดไป ▶</button>
+        <button id="grpo-reset" class="btn-secondary text-xs px-3">↺ Reset</button>
+        <span id="grpo-step-label" class="text-xs text-gray-400 italic self-center"></span>
+      </div>
+      <p class="text-xs text-gray-400 mt-2 italic">
+        * ค่า reward เหล่านี้คำนวณจาก compute_reward() จริง สำหรับ output ที่เลือกมาเพื่อการอธิบาย
+      </p>
+    </div>
+
+    <!-- Curriculum + KL -->
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div class="info-card">
+        <p class="text-sm font-semibold mb-2">Curriculum Learning</p>
+        <div id="curriculum-bar" class="curriculum-bar"></div>
+        <p id="curriculum-labels" class="text-xs text-gray-500 mt-1"></p>
+        <p class="text-xs text-gray-500 mt-2">
+          best checkpoint ที่ step <strong>9,400</strong> — exact_match = <strong>100%</strong>
+        </p>
+      </div>
+      <div class="info-card">
+        <p class="text-sm font-semibold mb-2">KL Penalty + Entropy Bonus</p>
+        <p class="text-xs text-gray-600 mb-1">
+          <strong>KL penalty (λ=0.2):</strong> ป้องกัน model ลืมการ reverse
+          (catastrophic forgetting) — ถ้าไม่มี model อาจ generate <code>&lt;EOS&gt;</code> ทันทีเพื่อหลบโทษตัว b
+        </p>
+        <p class="text-xs text-gray-600">
+          <strong>Entropy bonus (0.005):</strong> ส่งเสริมการ explore ป้องกัน policy collapse
+          ไปยัง output เดิมซ้ำๆ
+        </p>
+        <div class="grid grid-cols-2 gap-x-4 gap-y-1 text-xs mt-2">
+          <div><span class="text-gray-500">Steps:</span> <span class="font-mono">15,000</span></div>
+          <div><span class="text-gray-500">RL LR:</span> <span class="font-mono">3×10⁻⁵</span></div>
+          <div><span class="text-gray-500">grpo_g:</span> <span class="font-mono">4</span></div>
+          <div><span class="text-gray-500">batch:</span> <span class="font-mono">8</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<!-- Section 6 — Reward Function                                            -->
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<section id="section-reward" class="section-container">
+  <div class="section-inner">
+    <h2 class="section-title">ฟังก์ชันรางวัล / <span class="section-subtitle">Reward Function</span></h2>
+
+    <div class="analogy-card">
+      reward function เหมือนใบแจ้งคะแนนรายข้อ — ตอบถูกทั้งหมดได้ +5
+      แต่ใส่ตัว b เข้ามาโดนหักทันที −1 ต่อตัว
+      ตอบถูกบางส่วนก็ได้คะแนนย่อย เพื่อให้ policy มีทิศทางในการปรับปรุง
+    </div>
+
+    <a href="deep-dive/04-reward-design.html" class="deep-dive-link">เจาะลึก → Reward Engineering</a>
+
+    <div class="widget-card">
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+        <div>
+          <label class="text-xs font-semibold text-gray-600 block mb-1">Input sequence (ลำดับต้นทาง)</label>
+          <input id="reward-input" type="text"
+            class="border border-gray-300 rounded-md px-3 py-2 text-sm font-mono w-full focus:outline-none focus:border-green-500"
+            value="bomb" autocomplete="off" spellcheck="false" />
+          <p id="reward-target-display" class="text-xs text-gray-500 mt-1 font-mono"></p>
+        </div>
+        <div>
+          <label class="text-xs font-semibold text-gray-600 block mb-1">Predicted output (output ของโมเดล)</label>
+          <input id="reward-pred" type="text"
+            class="border border-gray-300 rounded-md px-3 py-2 text-sm font-mono w-full focus:outline-none focus:border-blue-500"
+            value="bmob" autocomplete="off" spellcheck="false" />
+          <div class="flex items-center gap-2 mt-1">
+            <label class="text-xs text-gray-500 flex items-center gap-1 cursor-pointer">
+              <input type="checkbox" id="reward-advanced" class="accent-blue-600" />
+              advanced mode (พิมพ์ special tokens เช่น &lt;PAD&gt;)
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <div class="flex flex-wrap gap-2 mb-4">
+        <span class="text-xs text-gray-500 self-center">ตัวอย่าง:</span>
+        <button class="btn-preset" data-ri="bomb"  data-rp="mo">bomb → mo ✓</button>
+        <button class="btn-preset" data-ri="bomb"  data-rp="bmob">bomb → bmob ✗b</button>
+        <button class="btn-preset" data-ri="tesbt" data-rp="tset">tesbt → tset ✓</button>
+        <button class="btn-preset" data-ri="tesbt" data-rp="tbset">tesbt → tbset ✗b</button>
+        <button id="reward-reset" class="btn-secondary text-xs px-2">↺ Reset</button>
+      </div>
+
+      <div id="reward-bars" class="mb-3"></div>
+
+      <div class="flex items-center gap-3 mt-3 p-3 rounded-lg" id="reward-total-box">
+        <span class="text-sm text-gray-600">Total reward:</span>
+        <span id="reward-total" class="text-2xl font-mono font-bold">—</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<!-- Section 7 — Results                                                    -->
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<section id="section-results" class="section-container">
+  <div class="section-inner">
+    <h2 class="section-title">ผลการทดลอง / <span class="section-subtitle">Results</span></h2>
+
+    <p class="text-sm text-gray-600 mb-4">
+      ประเมินบน fixed test set (seed=42) — ทุก metric วัดเทียบกับ skip-b target
+    </p>
+
+    <!-- Summary cards -->
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6" id="results-cards"></div>
+
+    <!-- Per-length chart -->
+    <div class="widget-card mb-5">
+      <div class="flex flex-wrap items-center justify-between gap-3 mb-3">
+        <p class="text-sm font-semibold">Accuracy ต่อความยาว sequence</p>
+        <div class="flex gap-2">
+          <button id="toggle-exact" class="btn-toggle active" data-metric="exact">Exact Match</button>
+          <button id="toggle-nob"   class="btn-toggle"        data-metric="nob">No-B Rate</button>
+        </div>
+      </div>
+      <div class="overflow-x-auto">
+        <svg id="per-length-chart"></svg>
+      </div>
+      <div class="flex flex-wrap gap-4 mt-2 text-xs text-gray-600">
+        <span><span class="inline-block w-3 h-3 rounded-sm bg-blue-500 mr-1"></span>SFT</span>
+        <span><span class="inline-block w-3 h-3 rounded-sm bg-green-500 mr-1"></span>RL</span>
+        <span class="text-green-700">■ in-distribution (len 2–6)</span>
+        <span class="text-gray-500">■ OOD (len 7–15)</span>
+      </div>
+    </div>
+
+    <!-- Sanity check table -->
+    <div class="mb-5">
+      <p class="text-sm font-semibold mb-2">Sanity Check — เปรียบเทียบ SFT กับ RL (จาก report Table 6)</p>
+      <div class="overflow-x-auto">
+        <table class="sanity-table" id="sanity-table">
+          <thead>
+            <tr>
+              <th>Input</th>
+              <th>SFT output</th>
+              <th>RL output</th>
+              <th>Target (skip-b)</th>
+              <th>RL ถูก?</th>
+            </tr>
+          </thead>
+          <tbody id="sanity-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Edge cases -->
+    <div class="info-card">
+      <p class="text-sm font-semibold mb-2">Edge Cases ที่น่าสนใจ (จาก report Table 9)</p>
+      <div class="overflow-x-auto">
+        <table class="sanity-table" id="edge-table">
+          <thead>
+            <tr>
+              <th>กรณี</th>
+              <th>Input</th>
+              <th>SFT</th>
+              <th>RL output</th>
+              <th>Target</th>
+              <th>RL ถูก?</th>
+            </tr>
+          </thead>
+          <tbody id="edge-tbody"></tbody>
+        </table>
+      </div>
+      <p class="text-xs text-gray-500 mt-2">
+        กรณี "b ตัวเดียว" → RL ตอบ j แทน (ว่าง): เนื่องจาก min_len=2 ในการฝึก
+        ทำให้โมเดลไม่คุ้นกับ sequence ยาว 1 ตัว
+      </p>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<!-- Section 8 — Recap                                                      -->
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<section id="section-recap" class="section-container">
+  <div class="section-inner">
+    <h2 class="section-title">สรุป / <span class="section-subtitle">Recap</span></h2>
+
+    <div class="analogy-card">
+      SFT สอนให้รู้ภาษา (กลับลำดับ) — RL สอนให้รู้กฎพิเศษ (ตัด b) ที่ครูอธิบายด้วยคำพูดไม่ได้
+    </div>
+
+    <!-- Pipeline -->
+    <div class="widget-card mb-6">
+      <p class="text-xs text-gray-500 mb-3">คลิกแต่ละขั้นเพื่อกลับไปยัง section นั้น</p>
+      <div class="overflow-x-auto">
+        <svg id="recap-pipeline"></svg>
+      </div>
+    </div>
+
+    <!-- Takeaways -->
+    <div class="mb-6">
+      <p class="text-sm font-semibold mb-3">บทเรียนหลัก (Key Takeaways)</p>
+      <div class="space-y-3" id="recap-takeaways">
+        <div class="flex gap-3 p-3 bg-green-50 border border-green-200 rounded-lg">
+          <span class="text-green-600 font-bold text-lg mt-0.5">1</span>
+          <p class="text-sm">
+            Transformer ขนาดเล็ก <strong>2.1M parameters</strong> สามารถเรียนรู้ structured task
+            ได้อย่างมีประสิทธิภาพ — ไม่จำเป็นต้องใช้โมเดลขนาดใหญ่สำหรับทุกงาน
+          </p>
+        </div>
+        <div class="flex gap-3 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+          <span class="text-blue-600 font-bold text-lg mt-0.5">2</span>
+          <p class="text-sm">
+            <strong>SFT</strong> ดีสำหรับเรียน "รูปแบบ" แต่ไม่สามารถ express constraint
+            ที่ไม่อยู่ใน training label ได้ — เช่น "ห้ามมีตัว b ใน output"
+          </p>
+        </div>
+        <div class="flex gap-3 p-3 bg-amber-50 border border-amber-200 rounded-lg">
+          <span class="text-amber-600 font-bold text-lg mt-0.5">3</span>
+          <p class="text-sm">
+            <strong>GRPO</strong> แก้ปัญหานี้โดยใช้ group reward เป็น baseline —
+            ไม่ต้องการ value network แยกต่างหาก ประหยัด compute กว่า PPO
+          </p>
+        </div>
+        <div class="flex gap-3 p-3 bg-gray-50 border border-gray-200 rounded-lg">
+          <span class="text-gray-500 font-bold text-lg mt-0.5">4</span>
+          <p class="text-sm">
+            <strong>Generalization gap</strong> ยังคงอยู่ — RL เรียนรู้ skip-b behavior ใน
+            in-distribution (len 2–6) ได้ 100% แต่ exact_match ลดลงเร็วมากเมื่อ len > 6
+            เนื่องจาก positional encoding ไม่ได้ฝึกบน context ที่ยาวกว่า
+          </p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Deep Dives -->
+    <div class="info-card mb-6">
+      <p class="text-sm font-semibold mb-2">อยากรู้ลึกกว่านี้?</p>
+      <p class="text-xs text-gray-600 mb-3">
+        ดู <strong>Deep Dive track</strong> สำหรับ math + code ฉบับเต็ม — derivation จาก first principles, worked examples, และ code annotations
+      </p>
+      <a href="deep-dive/index.html"
+         class="inline-flex items-center gap-1 text-sm font-semibold text-purple-700 hover:text-purple-900 hover:underline">
+        เข้าสู่ Deep Dive Track →
+      </a>
+    </div>
+
+    <!-- Numbers summary -->
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-3 text-center mb-6">
+      <div class="bg-gray-50 rounded-lg p-3">
+        <div class="text-2xl font-bold text-green-700">100%</div>
+        <div class="text-xs text-gray-500">RL exact_match (in-dist)</div>
+      </div>
+      <div class="bg-gray-50 rounded-lg p-3">
+        <div class="text-2xl font-bold text-blue-700">9,400</div>
+        <div class="text-xs text-gray-500">steps ถึง best checkpoint</div>
+      </div>
+      <div class="bg-gray-50 rounded-lg p-3">
+        <div class="text-2xl font-bold text-amber-700">2.1M</div>
+        <div class="text-xs text-gray-500">parameters ทั้งหมด</div>
+      </div>
+      <div class="bg-gray-50 rounded-lg p-3">
+        <div class="text-2xl font-bold text-purple-700">30</div>
+        <div class="text-xs text-gray-500">tokens ใน vocabulary</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<!-- ── Footer ─────────────────────────────────────────────────────────────── -->
+<footer>
+  <strong>Mini Project — Lecture 1: Foundations of LLMs</strong><br />
+  การฝึก MiniGPT สำหรับ Sequence Reversal และการ Fine-tune ด้วย Reinforcement Learning (GRPO)<br />
+  <br />
+  Pawaris Klampol · Phoovich Phuengphaendin · Patcharada Tawaditap · Panisa Taratchon<br />
+  Computer Engineering and Digital Technology (CEDT) · 26 เมษายน 2568
+</footer>
+
+<!-- ── Data files (must load before JS — global window.DATA_xxx) ─────────── -->
+<script src="data/per_length.js"></script>
+<script src="data/grpo_example.js"></script>
+<script src="data/sample_predictions.js"></script>
+<script src="data/decoder_animation.js"></script>
+
+<!-- ── Utilities ──────────────────────────────────────────────────────────── -->
+<script src="js/vocab.js"></script>
+<script src="js/reward.js"></script>
+
+<!-- ── Section modules ────────────────────────────────────────────────────── -->
+<script src="js/sections/intro.js"></script>
+<script src="js/sections/tokenizer.js"></script>
+<script src="js/sections/architecture.js"></script>
+<script src="js/sections/sft.js"></script>
+<script src="js/sections/rl.js"></script>
+<script src="js/sections/reward_section.js"></script>
+<script src="js/sections/results.js"></script>
+<script src="js/sections/recap.js"></script>
+
+<!-- ── Bootstrap ──────────────────────────────────────────────────────────── -->
+<script src="js/main.js"></script>
+
+</body>
+</html>

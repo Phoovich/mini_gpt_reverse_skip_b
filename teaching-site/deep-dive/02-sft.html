@@ -1,0 +1,513 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>02 — SFT &amp; Teacher Forcing · Deep Dive</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+  <script>tailwind = { config: { theme: { extend: {} } } };</script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="../styles.css" />
+  <link rel="stylesheet" href="./deep-dive.css" />
+</head>
+<body>
+
+<div class="dd-layout">
+
+<!-- ── Left rail ──────────────────────────────────────────────────────────── -->
+<nav class="left-rail" id="left-rail">
+  <div class="rail-title">02 — SFT</div>
+  <a href="#s1" class="active">1. Maximum Likelihood</a>
+  <a href="#s2">2. Cross-Entropy</a>
+  <a href="#s3">3. Teacher Forcing</a>
+  <a href="#s4">4. Exposure Bias</a>
+  <a href="#s5">5. Dynamic Padding</a>
+  <a href="#s6">6. Gradient Flow</a>
+  <a href="#s7">7. Code</a>
+  <a href="#s8">8. Stop &amp; Check</a>
+  <hr class="rail-sep" />
+  <a href="./index.html" class="rail-back">← Deep Dive Hub</a>
+  <a href="../index.html" class="rail-back">← Overview</a>
+</nav>
+
+<!-- ── Main ───────────────────────────────────────────────────────────────── -->
+<main class="dd-main">
+
+  <a href="../index.html" class="deep-dive-link mb-2 inline-flex">← กลับสู่ overview</a>
+  <p class="text-xs text-gray-400 mb-4">Deep Dive 02 / 04</p>
+
+  <h1 class="dd-h1">SFT, Teacher Forcing, Cross-Entropy</h1>
+  <p class="dd-sub">Supervised Fine-Tuning — math ฉบับเต็มตั้งแต่ first principles</p>
+
+  <!-- Recap box -->
+  <div class="recap-box">
+    <strong>ก่อนเริ่ม</strong> — จาก overview section 4:
+    <ul class="mt-1 space-y-0.5 list-disc list-inside text-gray-700">
+      <li>Teacher forcing stepper: model เห็น ground truth token ทุก step ระหว่าง training</li>
+      <li>Cross-entropy loss slider: ยิ่ง P(correct) สูง → loss ต่ำ</li>
+      <li>SFT in-dist exact_match = 22.80% (ก่อน RL fine-tune)</li>
+    </ul>
+  </div>
+
+  <!-- ── S1: MLE ─────────────────────────────────────────────────────────── -->
+  <section class="dd-section" id="s1">
+    <h2 class="dd-h2">1. Maximum Likelihood Principle</h2>
+    <p class="dd-p">
+      เป้าหมายของ SFT คือหาค่า parameter θ ที่ทำให้โมเดลให้ probability สูงสุดแก่ training data
+      กล่าวอีกนัยหนึ่งคือ <em>maximize likelihood</em> ของข้อมูล:
+    </p>
+
+    <div class="formula-block">
+      <div class="flabel">Maximum Likelihood Objective</div>
+      \[ \theta^* = \arg\max_\theta \sum_{n=1}^{N} \sum_{t=1}^{T_n} \log p_\theta(y_t^{(n)} \mid x_{&lt;t}^{(n)}) \]
+    </div>
+
+    <p class="dd-p">
+      สังเกตว่าเราใช้ log probability แทน probability ตรงๆ เพราะ:
+      (1) log ทำให้ผลคูณกลายเป็นผลบวก — คำนวณง่ายกว่ามาก
+      (2) log เป็น monotone — argmax ไม่เปลี่ยน
+      (3) numerical stability — probability หลายตัวคูณกันจะ underflow
+    </p>
+
+    <p class="dd-p">
+      ใน code เราทำ gradient descent บน <em>negative log-likelihood</em> ซึ่งก็คือ cross-entropy loss:
+    </p>
+    <div class="formula-block">
+      \[ \mathcal{L}(\theta) = -\frac{1}{T} \sum_{t=1}^{T} \log p_\theta(y_t \mid x_{&lt;t}) \]
+    </div>
+  </section>
+
+  <!-- ── S2: Cross-Entropy ───────────────────────────────────────────────── -->
+  <section class="dd-section" id="s2">
+    <h2 class="dd-h2">2. Cross-Entropy Loss — อนุมานจาก MLE</h2>
+
+    <p class="dd-p">
+      Cross-entropy ระหว่าง distribution จริง p และ distribution ของโมเดล q นิยามว่า:
+    </p>
+    <div class="formula-block">
+      <div class="flabel">Cross-Entropy</div>
+      \[ H(p, q) = -\sum_x p(x) \log q(x) \]
+    </div>
+
+    <p class="dd-p">
+      สำหรับ training data เป้าหมาย p คือ one-hot distribution (รู้ token ที่ถูกต้องแน่นอน) ดังนั้น:
+    </p>
+    <div class="formula-block">
+      \[ H(p, q) = -\log q(y_{\text{true}}) \]
+    </div>
+
+    <p class="dd-p">
+      Cross-entropy ยังเชื่อมกับ KL divergence ผ่าน:
+      \( H(p, q) = H(p) + \text{KL}(p \| q) \)
+      เพราะ H(p) คงที่ การ minimize cross-entropy ก็คือการ minimize KL ซึ่งก็คือทำให้โมเดล
+      "ใกล้เคียง" distribution ข้อมูลมากที่สุด
+    </p>
+
+    <div class="worked-example">
+      <div class="welabel">ตัวอย่าง — input "tesbt", step 0</div>
+      <p>Target token = "t" (ตัวแรกของ reversed output)</p>
+      <p>โมเดล SFT ให้ P("t") = 0.82</p>
+      <p>Cross-entropy loss = \(-\log(0.82) \approx 0.198\)</p>
+      <hr class="my-2 border-green-200" />
+      <p>โมเดล RL ที่ step 1 ให้ P("s") = 0.45 (ไม่มี b)</p>
+      <p>CE = \(-\log(0.45) \approx 0.799\) — สูงกว่า เพราะยังไม่มั่นใจ</p>
+    </div>
+
+    <p class="dd-p text-sm text-gray-500">
+      ยิ่ง P(correct) สูง → \(-\log p\) ต่ำ → loss ต่ำ → gradient update เล็ก
+      (โมเดลมั่นใจถูก ไม่ต้องปรับมาก)
+    </p>
+  </section>
+
+  <!-- ── S3: Teacher Forcing ─────────────────────────────────────────────── -->
+  <section class="dd-section" id="s3">
+    <h2 class="dd-h2">3. Teacher Forcing</h2>
+    <p class="dd-p">
+      ระหว่าง training ที่ทุก time step t โมเดลจะได้รับ <strong>ground truth token ที่ถูกต้อง</strong>
+      เป็น input แทนที่จะใช้ output ของตัวเอง — นี่คือ <em>teacher forcing</em>
+    </p>
+
+    <p class="dd-p">
+      สำหรับ sequence <code class="text-xs bg-gray-100 px-1 rounded">[&lt;BOS&gt;, h, e, l, l, o, &lt;SEP&gt;, o, l, l, e, h, &lt;EOS&gt;]</code>:
+      <br />input x = tokens 0..11 | target y = tokens 1..12 (shift-by-1)
+    </p>
+
+    <!-- Interactive stepper -->
+    <div class="viz-card">
+      <div class="vtitle">Teacher Forcing vs Autoregressive — เปรียบเทียบแบบ interactive</div>
+      <p class="text-xs text-gray-500 mb-3">กด "ถัดไป" เพื่อดูทีละก้าว — ฝั่งซ้าย = teacher forcing, ฝั่งขวา = autoregressive</p>
+
+      <div class="grid grid-cols-2 gap-4 mb-3" id="tf-grid">
+        <div>
+          <p class="text-xs font-bold text-green-700 mb-2 uppercase tracking-wide">Teacher Forcing (train)</p>
+          <div id="tf-left" class="token-row flex-wrap min-h-8 text-xs"></div>
+          <p id="tf-left-note" class="text-xs text-gray-500 mt-1 italic"></p>
+        </div>
+        <div>
+          <p class="text-xs font-bold text-orange-700 mb-2 uppercase tracking-wide">Autoregressive (inference)</p>
+          <div id="tf-right" class="token-row flex-wrap min-h-8 text-xs"></div>
+          <p id="tf-right-note" class="text-xs text-gray-500 mt-1 italic"></p>
+        </div>
+      </div>
+      <p id="tf-predict" class="text-xs text-gray-600 bg-gray-50 rounded p-2 mb-3 min-h-6"></p>
+
+      <div class="flex gap-2">
+        <button id="tf-prev"  class="btn-secondary text-xs px-3">◀</button>
+        <button id="tf-next"  class="btn-primary text-xs px-3">ถัดไป ▶</button>
+        <button id="tf-reset" class="btn-secondary text-xs px-2">↺</button>
+        <span id="tf-step-label" class="text-xs text-gray-400 self-center italic"></span>
+      </div>
+    </div>
+
+    <p class="dd-p">
+      ข้อดีของ teacher forcing: ทุก position ใน sequence สามารถ compute loss พร้อมกัน
+      (parallel training) ไม่ต้องรอ token ก่อนหน้าเสร็จ — ต่างจาก RNN ที่ต้อง sequential
+    </p>
+  </section>
+
+  <!-- ── S4: Exposure Bias ──────────────────────────────────────────────── -->
+  <section class="dd-section" id="s4">
+    <h2 class="dd-h2">4. Exposure Bias</h2>
+    <p class="dd-p">
+      Teacher forcing สร้าง <em>distribution mismatch</em> ระหว่าง training กับ inference:
+    </p>
+    <ul class="dd-p list-disc list-inside space-y-1 ml-2">
+      <li><strong>Training:</strong> P(input at step t = ground truth token) = 1</li>
+      <li><strong>Inference:</strong> P(input at step t = model output) = 1</li>
+    </ul>
+    <p class="dd-p">
+      ถ้า model generate token ผิดในก้าวแรก ก้าวถัดๆ ไปทั้งหมดจะได้รับ context ที่ผิด
+      ซึ่ง model ไม่เคยเห็นระหว่าง training — <em>error compounding</em>
+    </p>
+
+    <div class="real-finding-box">
+      <strong>ทำไม RL ช่วย?</strong>
+      <code>rollout_with_logprobs()</code> ใช้ categorical sampling ทำให้ model ได้รับ
+      <em>model's own outputs</em> เป็น input ทุกก้าวระหว่าง training — ลด distribution mismatch
+    </div>
+  </section>
+
+  <!-- ── S5: Dynamic Padding ────────────────────────────────────────────── -->
+  <section class="dd-section" id="s5">
+    <h2 class="dd-h2">5. Dynamic Padding + <code>collate_fn</code></h2>
+
+    <p class="dd-p">
+      ใน batch หนึ่ง sequences มีความยาวต่างกัน เช่น 7, 11, 15 tokens
+      PyTorch DataLoader ต้องการ tensor shape คงที่ จึงต้อง pad ทุก sequence
+      ให้ยาวเท่ากับ sequence ที่ยาวที่สุดใน batch (<em>dynamic padding</em>)
+    </p>
+
+    <div class="worked-example">
+      <div class="welabel">ตัวอย่าง batch</div>
+      Batch มี 3 sequences ยาว 5, 8, 12 tokens<br />
+      หลัง collate_fn: x shape = <strong>(3, 12)</strong>, y shape = <strong>(3, 12)</strong><br />
+      seq0: tokens 0..4 จริง + PAD ที่ positions 5..11 (7 positions)<br />
+      seq1: tokens 0..7 จริง + PAD ที่ positions 8..11 (4 positions)<br />
+      seq2: tokens 0..11 จริง (ไม่ต้อง pad)
+    </div>
+
+    <p class="dd-p">
+      PAD positions ใน target y ต้องไม่มีผลต่อ gradient — ใช้ <code>ignore_index=PAD_ID</code>
+      ใน <code>F.cross_entropy</code> เพื่อทำให้ gradient = 0 ที่ PAD positions ทั้งหมด
+    </p>
+
+    <div class="proof-box"><span class="ptitle">Gradient proof</span>
+F.cross_entropy ด้วย ignore_index=0 (PAD_ID):
+
+  loss = (1/N_valid) * Σ_{t: y_t ≠ PAD} −log p(y_t)
+
+  ∂loss/∂logits_t = 0  ถ้า y_t = PAD
+                  = softmax(logits_t) − one_hot(y_t)  ถ้า y_t ≠ PAD
+
+→ PAD positions ไม่ดึง embedding หรือ parameter ใดๆ</div>
+  </section>
+
+  <!-- ── S6: Gradient Flow ───────────────────────────────────────────────── -->
+  <section class="dd-section" id="s6">
+    <h2 class="dd-h2">6. Gradient Flow Per Position</h2>
+
+    <p class="dd-p">
+      ข้อได้เปรียบสำคัญของ Transformer เทียบกับ RNN คือ gradient ไหลย้อนกลับมาพร้อมกันทุก position
+      ใน sequence ในขณะที่ RNN ต้องผ่าน chain ยาว (vanishing gradient problem)
+    </p>
+
+    <!-- Static SVG diagram -->
+    <div class="viz-card">
+      <div class="vtitle">Gradient flow: Transformer (parallel) vs RNN (sequential)</div>
+      <svg width="100%" viewBox="0 0 560 110" class="overflow-visible">
+        <!-- Transformer: parallel arrows -->
+        <text x="10" y="20" font-size="11" font-weight="600" fill="#374151">Transformer</text>
+        <rect x="10" y="30" width="50" height="26" rx="4" fill="#dcfce7" stroke="#16a34a" stroke-width="1.5"/>
+        <text x="35" y="47" text-anchor="middle" font-size="10" fill="#166534">t₁</text>
+        <rect x="75" y="30" width="50" height="26" rx="4" fill="#dcfce7" stroke="#16a34a" stroke-width="1.5"/>
+        <text x="100" y="47" text-anchor="middle" font-size="10" fill="#166534">t₂</text>
+        <rect x="140" y="30" width="50" height="26" rx="4" fill="#dcfce7" stroke="#16a34a" stroke-width="1.5"/>
+        <text x="165" y="47" text-anchor="middle" font-size="10" fill="#166534">t₃</text>
+        <rect x="205" y="30" width="50" height="26" rx="4" fill="#dcfce7" stroke="#16a34a" stroke-width="1.5"/>
+        <text x="230" y="47" text-anchor="middle" font-size="10" fill="#166534">t₄</text>
+        <!-- loss bar -->
+        <rect x="10" y="80" width="245" height="16" rx="4" fill="#bbf7d0" stroke="#16a34a" stroke-width="1"/>
+        <text x="132" y="92" text-anchor="middle" font-size="9" fill="#166534">Loss (all positions simultaneously)</text>
+        <!-- arrows up -->
+        <line x1="35" y1="56" x2="35" y2="80" stroke="#16a34a" stroke-width="1.5" marker-end="url(#arr)"/>
+        <line x1="100" y1="56" x2="100" y2="80" stroke="#16a34a" stroke-width="1.5" marker-end="url(#arr)"/>
+        <line x1="165" y1="56" x2="165" y2="80" stroke="#16a34a" stroke-width="1.5" marker-end="url(#arr)"/>
+        <line x1="230" y1="56" x2="230" y2="80" stroke="#16a34a" stroke-width="1.5" marker-end="url(#arr)"/>
+
+        <!-- RNN: sequential -->
+        <text x="300" y="20" font-size="11" font-weight="600" fill="#374151">RNN</text>
+        <rect x="300" y="30" width="50" height="26" rx="4" fill="#fee2e2" stroke="#dc2626" stroke-width="1.5"/>
+        <text x="325" y="47" text-anchor="middle" font-size="10" fill="#991b1b">h₁</text>
+        <rect x="365" y="30" width="50" height="26" rx="4" fill="#fee2e2" stroke="#dc2626" stroke-width="1.5"/>
+        <text x="390" y="47" text-anchor="middle" font-size="10" fill="#991b1b">h₂</text>
+        <rect x="430" y="30" width="50" height="26" rx="4" fill="#fee2e2" stroke="#dc2626" stroke-width="1.5"/>
+        <text x="455" y="47" text-anchor="middle" font-size="10" fill="#991b1b">h₃</text>
+        <rect x="495" y="30" width="50" height="26" rx="4" fill="#fca5a5" stroke="#dc2626" stroke-width="1.5"/>
+        <text x="520" y="47" text-anchor="middle" font-size="10" fill="#991b1b">loss</text>
+        <!-- arrows right -->
+        <line x1="350" y1="43" x2="365" y2="43" stroke="#dc2626" stroke-width="1.5" marker-end="url(#arr2)"/>
+        <line x1="415" y1="43" x2="430" y2="43" stroke="#dc2626" stroke-width="1.5" marker-end="url(#arr2)"/>
+        <line x1="480" y1="43" x2="495" y2="43" stroke="#dc2626" stroke-width="1.5" marker-end="url(#arr2)"/>
+        <!-- backprop chain -->
+        <line x1="495" y1="63" x2="495" y2="75" stroke="#dc2626" stroke-width="1" stroke-dasharray="3,2"/>
+        <line x1="430" y1="75" x2="495" y2="75" stroke="#dc2626" stroke-width="1" stroke-dasharray="3,2" marker-start="url(#arr2)"/>
+        <line x1="365" y1="75" x2="430" y2="75" stroke="#dc2626" stroke-width="1" stroke-dasharray="3,2" marker-start="url(#arr2)"/>
+        <line x1="300" y1="75" x2="365" y2="75" stroke="#dc2626" stroke-width="1" stroke-dasharray="3,2" marker-start="url(#arr2)"/>
+        <text x="395" y="97" text-anchor="middle" font-size="9" fill="#991b1b">backprop ผ่าน chain (vanishing gradient)</text>
+
+        <defs>
+          <marker id="arr"  markerWidth="6" markerHeight="6" refX="3" refY="3" orient="auto">
+            <path d="M0,0 L0,6 L6,3 z" fill="#16a34a"/>
+          </marker>
+          <marker id="arr2" markerWidth="6" markerHeight="6" refX="3" refY="3" orient="auto">
+            <path d="M0,0 L0,6 L6,3 z" fill="#dc2626"/>
+          </marker>
+        </defs>
+      </svg>
+    </div>
+  </section>
+
+  <!-- ── S7: Code ───────────────────────────────────────────────────────── -->
+  <section class="dd-section" id="s7">
+    <h2 class="dd-h2">7. Code — <code>collate_fn</code> และ <code>compute_loss</code></h2>
+
+    <h3 class="dd-h3">mini_gpt_reverse.py:38–49 — <code>collate_fn</code></h3>
+
+    <pre class="code-block"><code><span class="line-num">38</span><span class="kw">def</span> <span class="fn">collate_fn</span>(batch):
+<span class="line-num">39</span>    xs, ys = zip(*batch)
+<span class="line-num">40</span>    max_len = max(len(x) <span class="kw">for</span> x <span class="kw">in</span> xs)
+<span class="line-num">41</span>
+<span class="line-num">42</span>    x_padded = torch.full((len(xs), max_len), PAD_ID, dtype=torch.long)
+<span class="line-num">43</span>    y_padded = torch.full((len(ys), max_len), PAD_ID, dtype=torch.long)
+<span class="line-num">44</span>
+<span class="line-num">45</span>    <span class="kw">for</span> i, (x, y) <span class="kw">in</span> enumerate(zip(xs, ys)):
+<span class="line-num">46</span>        x_padded[i, : len(x)] = x
+<span class="line-num">47</span>        y_padded[i, : len(y)] = y
+<span class="line-num">48</span>
+<span class="line-num">49</span>    <span class="kw">return</span> x_padded, y_padded</code></pre>
+
+    <div class="annotation-box">
+      <div class="ann-label">ทำไม</div>
+      <code>torch.full(..., PAD_ID)</code> สร้าง tensor เต็มด้วย PAD ก่อน แล้วค่อย fill ด้วยข้อมูลจริง
+      — ทำให้ positions ที่ไม่ได้ fill ยังคงเป็น PAD_ID = 0 โดยอัตโนมัติ
+      ไม่ต้อง loop fill PAD แยก; รองรับ batch_first=True ที่ MiniGPT ต้องการ
+    </div>
+
+    <h3 class="dd-h3">mini_gpt_reverse.py:55–63 — <code>compute_loss</code></h3>
+
+    <pre class="code-block"><code><span class="line-num">55</span><span class="kw">def</span> <span class="fn">compute_loss</span>(model, x, y, device):
+<span class="line-num">56</span>    pad_mask = x == PAD_ID
+<span class="line-num">57</span>    logits = model(x, pad_mask=pad_mask)
+<span class="line-num">58</span>    loss = F.cross_entropy(
+<span class="line-num">59</span>        logits.reshape(-<span class="nm">1</span>, VOCAB_SIZE),
+<span class="line-num">60</span>        y.reshape(-<span class="nm">1</span>),
+<span class="line-num">61</span>        ignore_index=PAD_ID,
+<span class="line-num">62</span>    )
+<span class="line-num">63</span>    <span class="kw">return</span> loss</code></pre>
+
+    <div class="annotation-box">
+      <div class="ann-label">ทำไม</div>
+      <code>logits.reshape(-1, VOCAB_SIZE)</code> แปลง (B,T,V) → (B×T, V) เพื่อให้
+      <code>F.cross_entropy</code> รับได้ (ต้องการ 2D input);
+      <code>y.reshape(-1)</code> → (B×T,);
+      <code>ignore_index=PAD_ID</code> ทำให้ loss และ gradient = 0 ที่ทุก position
+      ที่ target = PAD — ป้องกันโมเดลเรียนรู้อะไรจาก padding context
+    </div>
+  </section>
+
+  <!-- ── S8: Stop and check ─────────────────────────────────────────────── -->
+  <section class="dd-section" id="s8">
+    <h2 class="dd-h2">8. Stop &amp; Check</h2>
+    <div class="check-section">
+      <div class="ctitle">ทดสอบความเข้าใจ</div>
+
+      <p class="text-sm font-semibold mb-1">Q1: ถ้า model ให้ P(correct) = 0.5 loss = เท่าไร?</p>
+      <details class="check-details mb-3">
+        <summary>เฉลย</summary>
+        <div class="answer">
+          \( -\log(0.5) = \log(2) \approx 0.693 \)<br />
+          เปรียบเทียบ: P=0.82 → loss=0.198; P=0.1 → loss=2.303
+        </div>
+      </details>
+
+      <p class="text-sm font-semibold mb-1">Q2: Batch มี 3 sequences ยาว 5, 8, 12 tokens หลัง collate_fn tensor มีขนาดเท่าไร?</p>
+      <details class="check-details mb-3">
+        <summary>เฉลย</summary>
+        <div class="answer">
+          (3, 12) ทั้ง x และ y<br />
+          seq0: positions 5–11 เป็น PAD (7 positions)<br />
+          seq1: positions 8–11 เป็น PAD (4 positions)<br />
+          seq2: ไม่ต้อง pad (ยาวที่สุดอยู่แล้ว)
+        </div>
+      </details>
+
+      <p class="text-sm font-semibold mb-1">Q3: ทำไม Exposure bias จึงเป็นปัญหาสำหรับ task นี้โดยเฉพาะ?</p>
+      <details class="check-details">
+        <summary>เฉลย</summary>
+        <div class="answer">
+          Task = generate reversed sequence; ถ้า generate token ผิดในก้าวแรก
+          token ที่เหลือทั้งหมดจะ off-by-position — error สะสมรุนแรงมาก<br /><br />
+          RL แก้เพราะ <code>rollout_with_logprobs()</code> ใช้ model output เป็น input
+          ทุกก้าว — training distribution ตรงกับ inference distribution มากขึ้น
+        </div>
+      </details>
+    </div>
+  </section>
+
+  <!-- Prev/Next -->
+  <div class="dd-prev-next">
+    <a href="./01-attention.html">← 01: Attention Internals</a>
+    <a href="./03-grpo.html">03: GRPO →</a>
+  </div>
+
+</main>
+</div>
+
+<!-- Data + JS -->
+<script src="../js/vocab.js"></script>
+
+<script>
+// ── Teacher Forcing Stepper ──────────────────────────────────────────────────
+(function () {
+  var SEQ = ['<BOS>','h','e','l','l','o','<SEP>','o','l','l','e','h','<EOS>'];
+  var step = 0;
+
+  // For autoregressive, simulate a mistake at position 9 ('l' → 'e')
+  var AR_MISTAKES = { 9: 'e' };
+  var ar_so_far = [];
+
+  function tokenClass(tok, idx, current, side, arTokens) {
+    if (idx === current) return 'token-box special' + (side === 'ar' ? ' border-orange-400' : '');
+    if (idx < current) {
+      if (side === 'ar' && arTokens && arTokens[idx] && arTokens[idx] !== SEQ[idx])
+        return 'token-box letter' + ' bg-red-100 border-red-400';
+      if (tok === '<BOS>' || tok === '<SEP>' || tok === '<EOS>' || tok === '<PAD>')
+        return 'token-box special';
+      return 'token-box letter';
+    }
+    return 'token-box letter opacity-30';
+  }
+
+  function renderLeft(step) {
+    var cont = document.getElementById('tf-left');
+    cont.innerHTML = '';
+    SEQ.forEach(function(tok, i) {
+      var sp = document.createElement('span');
+      sp.className = tokenClass(tok, i, step, 'tf', null);
+      if (i < step) sp.style.background = '#dcfce7';
+      if (i === step) sp.style.background = '#fef9c3';
+      sp.textContent = tok;
+      cont.appendChild(sp);
+    });
+  }
+
+  function getArTokens(upToStep) {
+    var result = SEQ.slice(0, upToStep + 1).map(function(t, i) {
+      return AR_MISTAKES[i] && i < upToStep ? AR_MISTAKES[i] : t;
+    });
+    return result;
+  }
+
+  function renderRight(step) {
+    var cont = document.getElementById('tf-right');
+    cont.innerHTML = '';
+    var arToks = getArTokens(step);
+    SEQ.forEach(function(tok, i) {
+      var sp = document.createElement('span');
+      var displayTok = (i < step && AR_MISTAKES[i]) ? AR_MISTAKES[i] : tok;
+      var hasMistake = i < step && AR_MISTAKES[i] && AR_MISTAKES[i] !== tok;
+      if (i < step) {
+        sp.className = 'token-box letter';
+        sp.style.background = hasMistake ? '#fee2e2' : '#fed7aa';
+        sp.style.borderColor = hasMistake ? '#f87171' : '#fb923c';
+      } else if (i === step) {
+        sp.className = 'token-box special';
+        sp.style.background = '#fef9c3';
+      } else {
+        sp.className = 'token-box letter opacity-30';
+      }
+      sp.textContent = displayTok;
+      cont.appendChild(sp);
+    });
+    var hasMistakeInHistory = Object.keys(AR_MISTAKES).some(function(k) { return parseInt(k) < step; });
+    var note = document.getElementById('tf-right-note');
+    note.textContent = hasMistakeInHistory ? '⚠ ตัวที่ผิด (position 9 → "e" แทน "l") ทำให้ tokens ถัดไปได้รับ context ผิด' : '';
+  }
+
+  function render() {
+    renderLeft(step);
+    renderRight(step);
+    var predict = document.getElementById('tf-predict');
+    if (step < SEQ.length - 1) {
+      predict.textContent = 'ก้าวที่ ' + step + ': model เห็น tokens 0..' + step + ' → ทำนาย token ' + (step+1) + ' = "' + SEQ[step+1] + '"';
+    } else {
+      predict.textContent = 'สิ้นสุด sequence';
+    }
+    document.getElementById('tf-step-label').textContent = 'step ' + step + ' / ' + (SEQ.length-1);
+  }
+
+  document.getElementById('tf-next').addEventListener('click', function() {
+    if (step < SEQ.length - 1) { step++; render(); }
+  });
+  document.getElementById('tf-prev').addEventListener('click', function() {
+    if (step > 0) { step--; render(); }
+  });
+  document.getElementById('tf-reset').addEventListener('click', function() {
+    step = 0; render();
+  });
+
+  render();
+})();
+
+// ── Scroll spy ───────────────────────────────────────────────────────────────
+(function() {
+  var ids = ['s1','s2','s3','s4','s5','s6','s7','s8'];
+  if (!('IntersectionObserver' in window)) return;
+  var visible = {};
+  var obs = new IntersectionObserver(function(entries) {
+    entries.forEach(function(e) { visible[e.target.id] = e.intersectionRatio; });
+    var best = null, bestR = 0;
+    ids.forEach(function(id) { var r = visible[id]||0; if(r>bestR){bestR=r;best=id;} });
+    if (!best) return;
+    document.querySelectorAll('#left-rail a').forEach(function(a) {
+      a.classList.toggle('active', a.getAttribute('href') === '#'+best);
+    });
+  }, { threshold: [0.1, 0.5] });
+  ids.forEach(function(id) { var el=document.getElementById(id); if(el) obs.observe(el); });
+})();
+</script>
+
+<!-- KaTeX -->
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"></script>
+<script>
+  renderMathInElement(document.body, {
+    delimiters: [
+      {left:'\\[', right:'\\]', display:true},
+      {left:'\\(', right:'\\)', display:false}
+    ],
+    throwOnError: false
+  });
+</script>
+</body>
+</html>

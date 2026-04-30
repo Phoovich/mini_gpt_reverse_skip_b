@@ -1,0 +1,508 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>04 — Reward Engineering · Deep Dive</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+  <script>tailwind = { config: { theme: { extend: {} } } };</script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="../styles.css" />
+  <link rel="stylesheet" href="./deep-dive.css" />
+</head>
+<body>
+
+<div class="dd-layout">
+<nav class="left-rail" id="left-rail">
+  <div class="rail-title">04 — Reward</div>
+  <a href="#s1" class="active">1. Sparse vs Dense</a>
+  <a href="#s2">2. Anatomy of Reward</a>
+  <a href="#s3">3. Reward Hacking</a>
+  <a href="#s4">4. Term Interactions</a>
+  <a href="#s5">5. Reward Landscape</a>
+  <a href="#s6">6. KL Sweep</a>
+  <a href="#s7">7. Code</a>
+  <a href="#s8">8. Stop &amp; Check</a>
+  <hr class="rail-sep" />
+  <a href="./index.html" class="rail-back">← Deep Dive Hub</a>
+  <a href="../index.html" class="rail-back">← Overview</a>
+</nav>
+
+<main class="dd-main">
+  <a href="../index.html" class="deep-dive-link mb-2 inline-flex">← กลับสู่ overview</a>
+  <p class="text-xs text-gray-400 mb-4">Deep Dive 04 / 04</p>
+
+  <h1 class="dd-h1">Reward Engineering</h1>
+  <p class="dd-sub">ออกแบบ reward function ยังไงให้ model เรียนรู้สิ่งที่เราต้องการ</p>
+
+  <div class="recap-box">
+    <strong>ก่อนเริ่ม</strong> — จาก overview section 6:
+    <ul class="mt-1 space-y-0.5 list-disc list-inside text-gray-700">
+      <li>Reward calculator: 8 terms, signed bar chart</li>
+      <li>Presets: (bomb→mo) = +5.30, (bomb→bmob) = −1.00</li>
+      <li>Target = reversed input กรองตัว b ออก + &lt;EOS&gt;</li>
+    </ul>
+  </div>
+
+  <!-- S1 -->
+  <section class="dd-section" id="s1">
+    <h2 class="dd-h2">1. Sparse vs. Dense Reward</h2>
+    <p class="dd-p">
+      <strong>Sparse reward</strong>: ให้ reward เฉพาะเมื่อ output สมบูรณ์ถูกต้องเท่านั้น
+      ปัญหาคือ <em>credit assignment</em> — model ไม่รู้ว่าก้าวไหนที่ผิด
+    </p>
+    <div class="worked-example">
+      <div class="welabel">กรณี sparse</div>
+      Input: "bbbbb" — ทุก rollout ได้ reward = 0 เพราะไม่ตรง target ""<br />
+      Model ไม่รู้ว่า "b เป็นปัญหา" — ทุก output ได้ signal เดียวกัน
+    </div>
+    <p class="dd-p">
+      <strong>Dense reward</strong>: ให้ partial credit ทุก rollout แม้ไม่ถูกต้องสมบูรณ์
+      ทำให้ model มีทิศทางในการปรับปรุง
+    </p>
+    <div class="worked-example">
+      <div class="welabel">กรณี dense (compute_reward ของเรา)</div>
+      Input: "bbbbb" → target: "" (ว่าง)<br />
+      Rollout ["b","b","b","<EOS>"]: b_penalty = −3.0 → model รู้ทันทีว่า b คือปัญหา<br />
+      Rollout ["<EOS>"]: len_mismatch = −0.1×|1−0| = 0; total = 0.0 (ดีกว่ามี b)
+    </div>
+  </section>
+
+  <!-- S2 -->
+  <section class="dd-section" id="s2">
+    <h2 class="dd-h2">2. Anatomy of Reward — 8 Terms</h2>
+    <p class="dd-p">ทุก term ออกแบบมาป้องกัน/ส่งเสริม behavior เฉพาะ:</p>
+
+    <div class="overflow-x-auto">
+      <table class="text-xs border-collapse w-full" id="reward-anatomy-table">
+        <thead>
+          <tr class="bg-gray-100">
+            <th class="p-2 text-left border border-gray-200">#</th>
+            <th class="p-2 text-left border border-gray-200">Term</th>
+            <th class="p-2 text-left border border-gray-200">Weight</th>
+            <th class="p-2 text-left border border-gray-200">ถ้าไม่มี term นี้...</th>
+            <th class="p-2 text-left border border-gray-200">ตัวอย่าง (bomb→mo)</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr class="bg-green-50"><td class="p-2 border border-gray-200 font-mono">1</td><td class="p-2 border border-gray-200">exact_match</td><td class="p-2 border border-gray-200 font-mono">+5.0</td><td class="p-2 border border-gray-200">ไม่มีแรงจูงใจหลัก</td><td class="p-2 border border-gray-200 font-mono">+5.0</td></tr>
+          <tr><td class="p-2 border border-gray-200 font-mono">2</td><td class="p-2 border border-gray-200">positional_match</td><td class="p-2 border border-gray-200 font-mono">+0.2×</td><td class="p-2 border border-gray-200">anagram = correct</td><td class="p-2 border border-gray-200 font-mono">+0.2</td></tr>
+          <tr><td class="p-2 border border-gray-200 font-mono">3</td><td class="p-2 border border-gray-200">character_coverage</td><td class="p-2 border border-gray-200 font-mono">+0.1×</td><td class="p-2 border border-gray-200">ไม่รู้ว่า characters ถูก</td><td class="p-2 border border-gray-200 font-mono">+0.1</td></tr>
+          <tr class="bg-red-50"><td class="p-2 border border-gray-200 font-mono">4</td><td class="p-2 border border-gray-200">b_penalty</td><td class="p-2 border border-gray-200 font-mono">−1.0×</td><td class="p-2 border border-gray-200">ไม่เรียน skip b เลย</td><td class="p-2 border border-gray-200 font-mono">0</td></tr>
+          <tr><td class="p-2 border border-gray-200 font-mono">5</td><td class="p-2 border border-gray-200">length_mismatch</td><td class="p-2 border border-gray-200 font-mono">−0.1×</td><td class="p-2 border border-gray-200">output สั้นมากหลีกเลี่ยง b</td><td class="p-2 border border-gray-200 font-mono">0</td></tr>
+          <tr><td class="p-2 border border-gray-200 font-mono">6</td><td class="p-2 border border-gray-200">no_eos</td><td class="p-2 border border-gray-200 font-mono">−0.5</td><td class="p-2 border border-gray-200">generate ไม่จบ</td><td class="p-2 border border-gray-200 font-mono">0</td></tr>
+          <tr><td class="p-2 border border-gray-200 font-mono">7</td><td class="p-2 border border-gray-200">pad_penalty</td><td class="p-2 border border-gray-200 font-mono">−2.0×</td><td class="p-2 border border-gray-200">generate &lt;PAD&gt; ได้ฟรี</td><td class="p-2 border border-gray-200 font-mono">0</td></tr>
+          <tr><td class="p-2 border border-gray-200 font-mono">8</td><td class="p-2 border border-gray-200">special_leak</td><td class="p-2 border border-gray-200 font-mono">−2.0×</td><td class="p-2 border border-gray-200">generate &lt;SEP&gt;/&lt;BOS&gt;</td><td class="p-2 border border-gray-200 font-mono">0</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- S3 -->
+  <section class="dd-section" id="s3">
+    <h2 class="dd-h2">3. Reward Hacking Examples</h2>
+    <p class="dd-p">
+      โมเดลอาจหา "shortcuts" ที่ได้ reward สูงโดยไม่ทำตาม intent ที่แท้จริง:
+    </p>
+
+    <div class="overflow-x-auto">
+      <table class="text-xs border-collapse w-full">
+        <thead>
+          <tr class="bg-gray-100">
+            <th class="p-2 text-left border border-gray-200">Output (input="bomb", target="mo&lt;EOS&gt;")</th>
+            <th class="p-2 text-left border border-gray-200">Reward</th>
+            <th class="p-2 text-left border border-gray-200">Term ที่ป้องกัน</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr class="bg-green-50"><td class="p-2 border border-gray-200 font-mono">["m","o","&lt;EOS&gt;"]</td><td class="p-2 border border-gray-200 font-mono font-bold">+5.30</td><td class="p-2 border border-gray-200">— (correct)</td></tr>
+          <tr class="bg-red-50"><td class="p-2 border border-gray-200 font-mono">["&lt;EOS&gt;"]</td><td class="p-2 border border-gray-200 font-mono">−0.20</td><td class="p-2 border border-gray-200">len_mismatch (−0.2), KL penalty ป้องกัน drift</td></tr>
+          <tr class="bg-red-50"><td class="p-2 border border-gray-200 font-mono">["b","b","b","&lt;EOS&gt;"]</td><td class="p-2 border border-gray-200 font-mono">−3.05</td><td class="p-2 border border-gray-200">b_penalty (−3.0) + cov (+0.05)</td></tr>
+          <tr class="bg-red-50"><td class="p-2 border border-gray-200 font-mono">["&lt;PAD&gt;","&lt;PAD&gt;","&lt;EOS&gt;"]</td><td class="p-2 border border-gray-200 font-mono">−4.00</td><td class="p-2 border border-gray-200">pad_penalty (−4.0)</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="worked-example">
+      <div class="welabel">Verified: output ["&lt;EOS&gt;"] (input="bomb")</div>
+      exact=0, pos=0, cov=0, b=0,<br />
+      len = −0.1 × |1 − 3| = <strong>−0.2</strong>, eos=0 (มี EOS), pad=0, special=0<br />
+      Total = <strong>−0.2</strong>
+    </div>
+
+    <p class="dd-p text-sm">
+      ที่ reward = −0.2 ต่ำมาก ไม่เพียงพอกระตุ้น model ให้ collapse
+      KL penalty ป้องกันไม่ให้ policy เบี่ยงออกจาก SFT reference มาก
+    </p>
+  </section>
+
+  <!-- S4 -->
+  <section class="dd-section" id="s4">
+    <h2 class="dd-h2">4. Term Interactions</h2>
+    <p class="dd-p">Terms บางคู่ interact กัน:</p>
+
+    <ul class="dd-p list-disc list-inside ml-2 space-y-2">
+      <li><strong>exact_match + b_penalty</strong>: reinforce กัน — output ที่ถูกต้องสมบูรณ์ไม่มี b อยู่แล้ว
+        ดังนั้น exact_match reward (5.0) ไม่โดน b_penalty หัก; output ที่มี b ไม่มีทาง exact match</li>
+      <li><strong>length_mismatch + positional_match</strong>: counteract เล็กน้อย —
+        output ที่สั้นเกินได้ len penalty แต่อาจได้ positional_match เต็มสำหรับ tokens ที่มี</li>
+      <li><strong>character_coverage + b_penalty</strong>: model ที่ include b ได้ coverage credit
+        แต่โดน b_penalty หัก → net effect คือ เอา b ออกดีกว่าเสมอ ถ้า target ไม่มี b</li>
+    </ul>
+  </section>
+
+  <!-- S5 Reward Landscape -->
+  <section class="dd-section" id="s5">
+    <h2 class="dd-h2">5. Reward Landscape — b_penalty Sweep</h2>
+    <p class="dd-p">
+      เมื่อปรับ b_penalty coefficient จาก −3 ถึง 0 (0 = ไม่มี penalty):
+      reward ของ output ที่มี b กับ output ที่ไม่มี b จะ "พลิก" กัน
+    </p>
+    <div class="viz-card">
+      <div class="vtitle">Reward vs b_penalty coefficient</div>
+      <svg id="landscape-svg" width="100%" viewBox="0 0 540 240"></svg>
+      <div id="landscape-legend" class="flex flex-wrap gap-3 mt-2 text-xs text-gray-600"></div>
+    </div>
+  </section>
+
+  <!-- S6 KL Sweep -->
+  <section class="dd-section" id="s6">
+    <h2 class="dd-h2">6. KL Coefficient Sweep</h2>
+    <p class="dd-p">
+      KL penalty ป้องกัน model เบี่ยงออกจาก SFT reference มากเกินไป
+      Lagrangian form: \( \mathcal{L}(\theta) = J(\theta) - \lambda \cdot \text{KL}(\pi_\theta \| \pi_{\text{ref}}) \)
+    </p>
+    <ul class="dd-p list-disc list-inside ml-2 space-y-1">
+      <li>\(\lambda\) ต่ำเกิน → model collapse (generate &lt;EOS&gt; ทันที)</li>
+      <li>\(\lambda\) สูงเกิน → policy ขยับจาก SFT ไม่ได้ → ไม่เรียน skip b</li>
+      <li>\(\lambda\) = 0.2 (ค่าที่ใช้จริง) → balance ดีที่สุด</li>
+    </ul>
+
+    <div class="real-finding-box">
+      📌 <strong>หมายเหตุ:</strong> กราฟด้านล่างเป็นข้อมูล FAKED (illustrative) —
+      การทดสอบ KL sweep จริงต้องใช้ training หลาย runs ซึ่งยังไม่ได้ทำ
+    </div>
+
+    <div class="viz-card">
+      <div class="vtitle">KL coefficient vs Performance (Illustrative)</div>
+      <svg id="kl-svg" width="100%" viewBox="0 0 540 240"></svg>
+      <div class="flex gap-4 mt-2 text-xs text-gray-600">
+        <span><span class="inline-block w-3 h-2 bg-green-500 rounded-sm mr-1"></span>exact_match %</span>
+        <span><span class="inline-block w-3 h-2 bg-blue-500 rounded-sm mr-1"></span>no_b_rate %</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- S7 Code -->
+  <section class="dd-section" id="s7">
+    <h2 class="dd-h2">7. Code — <code>compute_reward</code></h2>
+    <h3 class="dd-h3">mini_gpt_reverse_skip_b_rl.py:62–108</h3>
+    <pre class="code-block"><code><span class="line-num"> 62</span><span class="kw">def</span> <span class="fn">compute_reward</span>(seq, generated_tokens):
+<span class="line-num"> 63</span>    target = target_skip_b(seq)
+<span class="line-num"> 64</span>
+<span class="line-num"> 65</span>    <span class="kw">if</span> <span class="st">"&lt;EOS&gt;"</span> <span class="kw">in</span> generated_tokens:
+<span class="line-num"> 66</span>        eos_idx = generated_tokens.index(<span class="st">"&lt;EOS&gt;"</span>)
+<span class="line-num"> 67</span>        pred = generated_tokens[: eos_idx + <span class="nm">1</span>]
+<span class="line-num"> 68</span>    <span class="kw">else</span>:
+<span class="line-num"> 69</span>        pred = generated_tokens
+<span class="line-num"> 70</span>
+<span class="line-num"> 71</span>    reward = <span class="nm">0.0</span>
+<span class="line-num"> 72</span>
+<span class="line-num"> 73</span>    <span class="cm"># 1) exact match reward ให้แรง</span>
+<span class="line-num"> 74</span>    <span class="kw">if</span> pred == target:
+<span class="line-num"> 75</span>        reward += <span class="nm">5.0</span>
+<span class="line-num"> 76</span>
+<span class="line-num"> 77</span>    <span class="cm"># 2) positional match — ถูก position และ token</span>
+<span class="line-num"> 78</span>    min_len = min(len(pred), len(target))
+<span class="line-num"> 79</span>    positional_matches = sum(<span class="nm">1</span> <span class="kw">for</span> i <span class="kw">in</span> range(min_len) <span class="kw">if</span> pred[i] == target[i])
+<span class="line-num"> 80</span>    reward += <span class="nm">0.2</span> * positional_matches / max(len(target), <span class="nm">1</span>)
+<span class="line-num"> 81</span>
+<span class="line-num"> 82</span>    <span class="cm"># 3) character coverage</span>
+<span class="line-num"> 83</span>    pred_chars = Counter(t <span class="kw">for</span> t <span class="kw">in</span> pred <span class="kw">if</span> t <span class="kw">not in</span> (<span class="st">"&lt;EOS&gt;"</span>,))
+<span class="line-num"> 84</span>    target_chars = Counter(t <span class="kw">for</span> t <span class="kw">in</span> target <span class="kw">if</span> t <span class="kw">not in</span> (<span class="st">"&lt;EOS&gt;"</span>,))
+<span class="line-num"> 85</span>    coverage = sum((pred_chars &amp; target_chars).values())
+<span class="line-num"> 86</span>    reward += <span class="nm">0.1</span> * coverage / max(len(target) - <span class="nm">1</span>, <span class="nm">1</span>)
+<span class="line-num"> 87</span>
+<span class="line-num"> 88</span>    <span class="cm"># 4) ลงโทษตัว b แรง</span>
+<span class="line-num"> 89</span>    num_b = pred.count(<span class="st">"b"</span>)
+<span class="line-num"> 90</span>    reward -= <span class="nm">1.0</span> * num_b
+<span class="line-num"> 91</span>
+<span class="line-num"> 92</span>    <span class="cm"># 5) ความยาวผิดลงโทษ</span>
+<span class="line-num"> 93</span>    reward -= <span class="nm">0.1</span> * abs(len(pred) - len(target))
+<span class="line-num"> 94</span>
+<span class="line-num"> 95</span>    <span class="cm"># 6) ถ้าไม่มี EOS ลงโทษเพิ่ม</span>
+<span class="line-num"> 96</span>    <span class="kw">if</span> <span class="st">"&lt;EOS&gt;"</span> <span class="kw">not in</span> generated_tokens:
+<span class="line-num"> 97</span>        reward -= <span class="nm">0.5</span>
+<span class="line-num"> 98</span>
+<span class="line-num"> 99</span>    <span class="cm"># 7) ลงโทษ PAD tokens</span>
+<span class="line-num">100</span>    num_pad = pred.count(<span class="st">"&lt;PAD&gt;"</span>)
+<span class="line-num">101</span>    reward -= <span class="nm">2.0</span> * num_pad
+<span class="line-num">102</span>
+<span class="line-num">103</span>    <span class="cm"># 8) ลงโทษ special tokens ใน output</span>
+<span class="line-num">104</span>    num_sep = sum(<span class="nm">1</span> <span class="kw">for</span> t <span class="kw">in</span> pred <span class="kw">if</span> t == <span class="st">"&lt;SEP&gt;"</span>)
+<span class="line-num">105</span>    num_bos = sum(<span class="nm">1</span> <span class="kw">for</span> t <span class="kw">in</span> pred <span class="kw">if</span> t == <span class="st">"&lt;BOS&gt;"</span>)
+<span class="line-num">106</span>    reward -= <span class="nm">2.0</span> * (num_sep + num_bos)
+<span class="line-num">107</span>
+<span class="line-num">108</span>    <span class="kw">return</span> reward</code></pre>
+
+    <div class="annotation-box">
+      <div class="ann-label">ทำไมแต่ละ term</div>
+      <strong>Term 1 (+5.0):</strong> ให้ signal แรงสำหรับ perfect output — ทำให้ gradient update ใหญ่<br />
+      <strong>Term 2 (+0.2):</strong> partial credit สำหรับ correct order — model รู้ว่า position สำคัญ<br />
+      <strong>Term 3 (+0.1):</strong> partial credit สำหรับ correct characters แม้ผิด order<br />
+      <strong>Term 4 (−1.0):</strong> core b constraint — ถ้าไม่มี model ไม่มีเหตุผลต้อง skip b<br />
+      <strong>Term 5 (−0.1):</strong> ป้องกัน output สั้นมากเพื่อหลีกเลี่ยง b<br />
+      <strong>Term 6 (−0.5):</strong> ป้องกัน generate ไม่จบ (ไม่มี EOS)<br />
+      <strong>Term 7 (−2.0):</strong> hard penalty สำหรับ PAD ใน output (ไม่ควรเกิด)<br />
+      <strong>Term 8 (−2.0):</strong> hard penalty สำหรับ SEP/BOS ใน output (ไม่ควรเกิด)
+    </div>
+  </section>
+
+  <!-- S8 -->
+  <section class="dd-section" id="s8">
+    <h2 class="dd-h2">8. Stop &amp; Check</h2>
+    <div class="check-section">
+      <div class="ctitle">ทดสอบความเข้าใจ</div>
+
+      <p class="text-sm font-semibold mb-1">Q1: output ["&lt;EOS&gt;"] ทันที (input="bomb", target=["m","o","&lt;EOS&gt;"]) reward = เท่าไร?</p>
+      <details class="check-details mb-3">
+        <summary>เฉลย</summary>
+        <div class="answer">
+          exact=0, pos=0, cov=0, b=0,<br />
+          len = −0.1 × |1 − 3| = −0.2, eos=0 (มี EOS อยู่แล้ว), pad=0, special=0<br />
+          Total = <strong>−0.2</strong>
+        </div>
+      </details>
+
+      <p class="text-sm font-semibold mb-1">Q2: term ไหนป้องกัน model จาก generating &lt;PAD&gt; tokens?</p>
+      <details class="check-details mb-3">
+        <summary>เฉลย</summary>
+        <div class="answer">
+          <strong>Term 7</strong>: pad_penalty = −2.0 × count(&lt;PAD&gt; in pred)<br />
+          เป็น hard penalty เพราะ −2.0 &gt;&gt; b_penalty (−1.0)
+        </div>
+      </details>
+
+      <p class="text-sm font-semibold mb-1">Q3: ถ้าตั้ง b_penalty = 0.0 (ลบ term 4 ออก) model จะ converge ไปที่ exact_match=100% ได้ไหม?</p>
+      <details class="check-details">
+        <summary>เฉลย</summary>
+        <div class="answer">
+          ไม่ได้: model ไม่มีแรงจูงใจ skip b → จะ converge เป็น reversed output ปกติ (เหมือน SFT)<br />
+          exact_match จะต่ำ เพราะ target = reversed skip-b แต่ output = reversed with b<br />
+          (สำหรับ sequence ที่ไม่มี b เลย อาจ exact match ได้ — ประมาณ 30%)
+        </div>
+      </details>
+    </div>
+  </section>
+
+  <div class="dd-prev-next">
+    <a href="./03-grpo.html">← 03: GRPO</a>
+    <a href="./index.html">Deep Dive Hub →</a>
+  </div>
+</main>
+</div>
+
+<!-- Data -->
+<script src="../data/reward_landscape.js"></script>
+<script src="../data/kl_sweep.js"></script>
+
+<script>
+// ── Reward Landscape Chart ──────────────────────────────────────────────────
+(function() {
+  if (!window.DATA_REWARD_LANDSCAPE) return;
+  var D = window.DATA_REWARD_LANDSCAPE;
+  var coeffs = D.coeff_values;
+  var pairs  = D.pairs;
+  var rewards = D.rewards;
+
+  var NS = 'http://www.w3.org/2000/svg';
+  var svg = document.getElementById('landscape-svg');
+  var W = 540, H = 240, L = 55, R = 20, T = 20, B = 40;
+  var PW = W - L - R, PH = H - T - B;
+
+  // Determine y range
+  var allR = rewards.reduce(function(a,b){return a.concat(b);}, []);
+  var yMin = Math.min.apply(null, allR) - 0.5;
+  var yMax = Math.max.apply(null, allR) + 0.5;
+  var xMin = coeffs[0], xMax = coeffs[coeffs.length-1];
+
+  function px(c) { return L + (c - xMin) / (xMax - xMin) * PW; }
+  function py(r) { return T + (1 - (r - yMin) / (yMax - yMin)) * PH; }
+
+  // Axes
+  var xAxis = document.createElementNS(NS,'line');
+  xAxis.setAttribute('x1',L); xAxis.setAttribute('y1',T+PH);
+  xAxis.setAttribute('x2',L+PW); xAxis.setAttribute('y2',T+PH);
+  xAxis.setAttribute('stroke','#94a3b8'); xAxis.setAttribute('stroke-width','1.5');
+  svg.appendChild(xAxis);
+  var yAxis = document.createElementNS(NS,'line');
+  yAxis.setAttribute('x1',L); yAxis.setAttribute('y1',T);
+  yAxis.setAttribute('x2',L); yAxis.setAttribute('y2',T+PH);
+  yAxis.setAttribute('stroke','#94a3b8'); yAxis.setAttribute('stroke-width','1.5');
+  svg.appendChild(yAxis);
+
+  // Zero line
+  if (yMin < 0 && yMax > 0) {
+    var zl = document.createElementNS(NS,'line');
+    zl.setAttribute('x1',L); zl.setAttribute('y1',py(0));
+    zl.setAttribute('x2',L+PW); zl.setAttribute('y2',py(0));
+    zl.setAttribute('stroke','#d1d5db'); zl.setAttribute('stroke-width','1'); zl.setAttribute('stroke-dasharray','4,3');
+    svg.appendChild(zl);
+  }
+
+  // X tick labels
+  [-3,-2,-1,0].forEach(function(v) {
+    var tx = document.createElementNS(NS,'text');
+    tx.setAttribute('x', px(v)); tx.setAttribute('y', T+PH+14);
+    tx.setAttribute('text-anchor','middle'); tx.setAttribute('font-size','9'); tx.setAttribute('fill','#6b7280');
+    tx.textContent = v;
+    svg.appendChild(tx);
+  });
+  var xLabel = document.createElementNS(NS,'text');
+  xLabel.setAttribute('x', L+PW/2); xLabel.setAttribute('y', H-4);
+  xLabel.setAttribute('text-anchor','middle'); xLabel.setAttribute('font-size','9'); xLabel.setAttribute('fill','#6b7280');
+  xLabel.textContent = 'b_penalty coefficient';
+  svg.appendChild(xLabel);
+
+  // Y tick labels
+  [-4,-2,0,2,4,6].forEach(function(v) {
+    if (v < yMin-0.1 || v > yMax+0.1) return;
+    var ty = document.createElementNS(NS,'text');
+    ty.setAttribute('x', L-4); ty.setAttribute('y', py(v)+3);
+    ty.setAttribute('text-anchor','end'); ty.setAttribute('font-size','9'); ty.setAttribute('fill','#6b7280');
+    ty.textContent = v;
+    svg.appendChild(ty);
+  });
+
+  var COLORS = ['#7c3aed','#16a34a','#dc2626','#ca8a04','#0284c7'];
+  var legend = document.getElementById('landscape-legend');
+
+  pairs.forEach(function(pair, idx) {
+    var pts = coeffs.map(function(c,ci) { return px(-Math.abs(c)) + ',' + py(rewards[idx][ci]); }).join(' ');
+    // Note: coeff_values are [-3,...,0], the actual penalty is abs(coeff)
+    var pts2 = coeffs.map(function(c,ci) { return px(c) + ',' + py(rewards[idx][ci]); }).join(' ');
+    var poly = document.createElementNS(NS,'polyline');
+    poly.setAttribute('points', pts2);
+    poly.setAttribute('fill','none'); poly.setAttribute('stroke',COLORS[idx]);
+    poly.setAttribute('stroke-width','2'); poly.setAttribute('stroke-linejoin','round');
+    svg.appendChild(poly);
+
+    // Legend
+    var span = document.createElement('span');
+    span.innerHTML = '<span style="display:inline-block;width:20px;height:3px;background:'+COLORS[idx]+';margin-right:4px;vertical-align:middle;border-radius:2px"></span>' +
+      pair.input + '→' + pair.pred;
+    legend.appendChild(span);
+  });
+
+  // Mark project value (b_penalty = -1.0, x = -1.0 in coeff space)
+  var markX = px(-1.0);
+  var ml = document.createElementNS(NS,'line');
+  ml.setAttribute('x1',markX); ml.setAttribute('y1',T);
+  ml.setAttribute('x2',markX); ml.setAttribute('y2',T+PH);
+  ml.setAttribute('stroke','#7c3aed'); ml.setAttribute('stroke-width','1.5'); ml.setAttribute('stroke-dasharray','4,3');
+  svg.appendChild(ml);
+  var mt = document.createElementNS(NS,'text');
+  mt.setAttribute('x',markX+2); mt.setAttribute('y',T+12);
+  mt.setAttribute('font-size','8'); mt.setAttribute('fill','#7c3aed');
+  mt.textContent = 'project value';
+  svg.appendChild(mt);
+})();
+
+// ── KL Sweep Chart ───────────────────────────────────────────────────────────
+(function() {
+  if (!window.DATA_KL_SWEEP) return;
+  var D = window.DATA_KL_SWEEP;
+  var NS = 'http://www.w3.org/2000/svg';
+  var svg = document.getElementById('kl-svg');
+  var W=540,H=240,L=55,R=20,T=20,B=40;
+  var PW=W-L-R, PH=H-T-B;
+  var kls = D.kl_values;
+  var em = D.exact_match_pct;
+  var nb = D.no_b_rate_pct;
+  var xMin=kls[0], xMax=kls[kls.length-1];
+
+  function px(v) { return L + (v-xMin)/(xMax-xMin)*PW; }
+  function py(v) { return T + (1 - v/100)*PH; }
+
+  // Axes
+  var xa=document.createElementNS(NS,'line');
+  xa.setAttribute('x1',L);xa.setAttribute('y1',T+PH);xa.setAttribute('x2',L+PW);xa.setAttribute('y2',T+PH);
+  xa.setAttribute('stroke','#94a3b8');xa.setAttribute('stroke-width','1.5');svg.appendChild(xa);
+  var ya=document.createElementNS(NS,'line');
+  ya.setAttribute('x1',L);ya.setAttribute('y1',T);ya.setAttribute('x2',L);ya.setAttribute('y2',T+PH);
+  ya.setAttribute('stroke','#94a3b8');ya.setAttribute('stroke-width','1.5');svg.appendChild(ya);
+
+  // Y grid
+  [0,25,50,75,100].forEach(function(v) {
+    var gl=document.createElementNS(NS,'line');
+    gl.setAttribute('x1',L);gl.setAttribute('y1',py(v));gl.setAttribute('x2',L+PW);gl.setAttribute('y2',py(v));
+    gl.setAttribute('stroke','#f1f5f9');gl.setAttribute('stroke-width','1');svg.appendChild(gl);
+    var ty=document.createElementNS(NS,'text');
+    ty.setAttribute('x',L-4);ty.setAttribute('y',py(v)+3);
+    ty.setAttribute('text-anchor','end');ty.setAttribute('font-size','9');ty.setAttribute('fill','#6b7280');
+    ty.textContent = v+'%';svg.appendChild(ty);
+  });
+
+  // X labels
+  kls.forEach(function(v) {
+    var tx=document.createElementNS(NS,'text');
+    tx.setAttribute('x',px(v));tx.setAttribute('y',T+PH+14);
+    tx.setAttribute('text-anchor','middle');tx.setAttribute('font-size','9');tx.setAttribute('fill','#6b7280');
+    tx.textContent=v;svg.appendChild(tx);
+  });
+
+  function makeLine(data, color) {
+    var pts = kls.map(function(v,i){ return px(v)+','+py(data[i]); }).join(' ');
+    var p=document.createElementNS(NS,'polyline');
+    p.setAttribute('points',pts);p.setAttribute('fill','none');
+    p.setAttribute('stroke',color);p.setAttribute('stroke-width','2.5');p.setAttribute('stroke-linejoin','round');
+    svg.appendChild(p);
+    kls.forEach(function(v,i) {
+      var c=document.createElementNS(NS,'circle');
+      c.setAttribute('cx',px(v));c.setAttribute('cy',py(data[i]));c.setAttribute('r','3.5');
+      c.setAttribute('fill',color);svg.appendChild(c);
+    });
+  }
+  makeLine(em, '#16a34a');
+  makeLine(nb, '#3b82f6');
+
+  // Mark project kl_coef = 0.2
+  var mx = px(0.2);
+  var ml=document.createElementNS(NS,'line');
+  ml.setAttribute('x1',mx);ml.setAttribute('y1',T);ml.setAttribute('x2',mx);ml.setAttribute('y2',T+PH);
+  ml.setAttribute('stroke','#7c3aed');ml.setAttribute('stroke-width','1.5');ml.setAttribute('stroke-dasharray','4,3');
+  svg.appendChild(ml);
+  var mt=document.createElementNS(NS,'text');
+  mt.setAttribute('x',mx+2);mt.setAttribute('y',T+12);
+  mt.setAttribute('font-size','8');mt.setAttribute('fill','#7c3aed');
+  mt.textContent='λ=0.2 (project)';svg.appendChild(mt);
+})();
+
+// ── Scroll spy ────────────────────────────────────────────────────────────────
+(function() {
+  var ids=['s1','s2','s3','s4','s5','s6','s7','s8'];
+  if (!('IntersectionObserver' in window)) return;
+  var visible={};
+  var obs=new IntersectionObserver(function(entries) {
+    entries.forEach(function(e){visible[e.target.id]=e.intersectionRatio;});
+    var best=null,bestR=0;
+    ids.forEach(function(id){var r=visible[id]||0;if(r>bestR){bestR=r;best=id;}});
+    if(!best) return;
+    document.querySelectorAll('#left-rail a[href]').forEach(function(a){
+      a.classList.toggle('active',a.getAttribute('href')==='#'+best);
+    });
+  },{threshold:[0.1,0.5]});
+  ids.forEach(function(id){var el=document.getElementById(id);if(el)obs.observe(el);});
+})();
+</script>
+
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"></script>
+<script>
+  renderMathInElement(document.body,{
+    delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false}],
+    throwOnError:false
+  });
+</script>
+</body>
+</html>
