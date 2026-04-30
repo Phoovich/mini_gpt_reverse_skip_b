@@ -3,7 +3,7 @@ import torch
 from vocab import VOCAB_SIZE
 from model import MiniGPT, generate_reversed, extract_prediction
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+device = torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
 
 checkpoint = torch.load("best_mini_gpt_reverse.pth", map_location=device)
 

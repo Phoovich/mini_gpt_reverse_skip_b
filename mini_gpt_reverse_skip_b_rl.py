@@ -4,7 +4,7 @@ from collections import Counter
 import torch
 import wandb
 
-from vocab import CHARS, PAD_ID, EOS_ID, VOCAB_SIZE, encode, decode, stoi, itos
+from vocab import CHARS, PAD_ID, BOS_ID, SEP_ID, EOS_ID, VOCAB_SIZE, encode, decode, stoi, itos
 from model import MiniGPT, generate_reversed, extract_prediction
 
 
@@ -49,7 +49,7 @@ def rollout_with_logprobs(model, seq, device, max_new_tokens=None):
 
         x = torch.cat([x, next_id.unsqueeze(1)], dim=1)
 
-        if next_id.item() == EOS_ID:
+        if next_id.item() in (EOS_ID, SEP_ID, BOS_ID):
             break
 
     output_tokens = decode(sampled_ids)
@@ -100,6 +100,11 @@ def compute_reward(seq, generated_tokens):
     num_pad = pred.count("<PAD>")
     reward -= 2.0 * num_pad
 
+    # 8) ลงโทษ special tokens (<SEP>, <BOS>) ที่ปรากฏใน output (ไม่ควรเกิด)
+    num_sep = sum(1 for t in pred if t == "<SEP>")
+    num_bos = sum(1 for t in pred if t == "<BOS>")
+    reward -= 2.0 * (num_sep + num_bos)
+
     return reward
 
 
@@ -110,7 +115,10 @@ def sample_seq_mixed(min_len, max_len, prob_has_b=0.7, rng=None):
     seq = [rng.choice(CHARS) for _ in range(n)]
 
     if rng.random() < prob_has_b:
-        b_count = rng.randint(1, max(1, n // 2))
+        if n >= 3:
+            b_count = rng.randint(2, max(2, n - 1))
+        else:
+            b_count = 1
         positions = rng.sample(range(n), k=b_count)
         for pos in positions:
             seq[pos] = "b"
@@ -191,8 +199,8 @@ def rl_finetune(
     ref_model,
     device,
     min_len=2,
-    max_len=6,
-    num_steps=20000,
+    max_len=10,
+    num_steps=40000,
     rl_lr=1e-4,
     log_every=100,
     batch_size=4,
@@ -351,7 +359,7 @@ def set_seed(seed: int):
 
 def main():
     set_seed(42)
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
 
     sft_checkpoint_path = "best_mini_gpt_reverse.pth"
     rl_checkpoint_path = "best_mini_gpt_reverse_skip_b_rl.pth"
@@ -368,13 +376,13 @@ def main():
         "num_layers": base_config["num_layers"],
         "dim_ff": base_config["dim_ff"],
         "dropout": base_config["dropout"],
-        "num_steps": 10000,
-        "rl_lr": 5e-5,
+        "num_steps": 15000,
+        "rl_lr": 3e-5,
         "rl_batch_size": 8,
         "grpo_g": 4,
-        "kl_coef": 0.1,
-        "entropy_coef": 0.01,
-        "curriculum_steps": 2000,
+        "kl_coef": 0.2,
+        "entropy_coef": 0.005,
+        "curriculum_steps": 3000,
         "log_every": 100,
         "device": str(device),
     }

@@ -148,7 +148,7 @@ def main():
         "num_val_samples": 5000,
         "num_test_samples": 5000,
         "min_len": 2,
-        "max_len": 6,
+        "max_len": 10,
         "batch_size": 64,
         "d_model": 256,
         "nhead": 8,
@@ -156,8 +156,8 @@ def main():
         "dim_ff": 512,
         "dropout": 0.1,
         "lr": 3e-4,
-        "num_epochs": 20,
-        "device": "cuda" if torch.cuda.is_available() else "cpu",
+        "num_epochs": 40,
+        "device": "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu",
         "project_name": "mini-gpt-reverse-sequence",
     }
 

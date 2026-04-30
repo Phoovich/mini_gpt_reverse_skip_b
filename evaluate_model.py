@@ -55,7 +55,7 @@ def per_length_breakdown(model, device, lengths, samples_per_length=100, seed=42
 
 
 def main():
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
     print(f"Device: {device}\n")
 
     sft_ckpt = torch.load("best_mini_gpt_reverse.pth", map_location=device)
