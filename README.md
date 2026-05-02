@@ -7,12 +7,12 @@ Two-stage training of a Transformer decoder to (1) reverse character sequences a
 
 ## Demo & Visualizations
 
-| Resource | Description |
-|---|---|
+| Resource                                               | Description                                            |
+| ------------------------------------------------------ | ------------------------------------------------------ |
 | [`teaching-site/index.html`](teaching-site/index.html) | Interactive explainer — architecture, SFT, RL, results |
-| [`viz/embedding_viz.html`](viz/embedding_viz.html) | Token embeddings & positional encoding visualization |
-| [`viz/viz.html`](viz/viz.html) | Training curves & reward landscape |
-| [`report/report.pdf`](report/report.pdf) | Full project report (Thai) |
+| [`viz/embedding_viz.html`](viz/embedding_viz.html)     | Token embeddings & positional encoding visualization   |
+| [`viz/viz.html`](viz/viz.html)                         | Training curves & reward landscape                     |
+| [`report/report.pdf`](report/report.pdf)               | Full project report (Thai)                             |
 
 ---
 
@@ -44,13 +44,13 @@ Output: e d c a        ← "b" is omitted
 
 The model is a **Transformer Encoder with a causal mask** (equivalent to a decoder), implemented in [`model.py`](model.py).
 
-| Hyperparameter | Value |
-|---|---|
-| `d_model` | 256 |
-| `nhead` | 8 |
-| `num_layers` | 4 |
-| `dim_feedforward` | 512 |
-| Vocabulary size | 30 (4 special + 26 letters) |
+| Hyperparameter    | Value                       |
+| ----------------- | --------------------------- |
+| `d_model`         | 256                         |
+| `nhead`           | 8                           |
+| `num_layers`      | 4                           |
+| `dim_feedforward` | 512                         |
+| Vocabulary size   | 30 (4 special + 26 letters) |
 
 ---
 
@@ -86,40 +86,40 @@ The model is a **Transformer Encoder with a causal mask** (equivalent to a decod
 
 ### SFT (Stage 1)
 
-| Setting | Value |
-|---|---|
-| Training samples | 50,000 |
-| Sequence length | 2–10 characters |
-| Epochs | 40 |
-| Batch size | 64 |
-| Learning rate | 3e-4 (ReduceLROnPlateau) |
-| Gradient clipping | max norm = 1.0 |
+| Setting           | Value                    |
+| ----------------- | ------------------------ |
+| Training samples  | 50,000                   |
+| Sequence length   | 2–10 characters          |
+| Epochs            | 40                       |
+| Batch size        | 64                       |
+| Learning rate     | 3e-4 (ReduceLROnPlateau) |
+| Gradient clipping | max norm = 1.0           |
 
 ### RL (Stage 2 — GRPO + KL Penalty)
 
-| Setting | Value |
-|---|---|
-| Training steps | 15,000 |
-| Sequence length | 2–6 characters |
-| RL learning rate | 3e-5 |
-| GRPO group size (`G`) | 4 |
-| KL coefficient | 0.2 |
-| Entropy coefficient | 0.005 |
-| Curriculum steps | 3,000 |
-| Prob. of "b" in sequence | 70% |
+| Setting                  | Value          |
+| ------------------------ | -------------- |
+| Training steps           | 15,000         |
+| Sequence length          | 2–6 characters |
+| RL learning rate         | 3e-5           |
+| GRPO group size (`G`)    | 4              |
+| KL coefficient           | 0.2            |
+| Entropy coefficient      | 0.005          |
+| Curriculum steps         | 3,000          |
+| Prob. of "b" in sequence | 70%            |
 
 **Reward function** (`compute_reward`):
 
-| Signal | Value |
-|---|---|
-| Exact match | +5.0 |
-| Per-position match | +0.2 each |
-| Character coverage | +0.1 each |
-| "b" in output (penalty) | −1.0 each |
-| Length mismatch | −0.1 per char |
-| Missing `<EOS>` | −0.5 |
-| PAD tokens in output | −2.0 each |
-| Unexpected `<SEP>`/`<BOS>` | −2.0 each |
+| Signal                     | Value         |
+| -------------------------- | ------------- |
+| Exact match                | +5.0          |
+| Per-position match         | +0.2 each     |
+| Character coverage         | +0.1 each     |
+| "b" in output (penalty)    | −1.0 each     |
+| Length mismatch            | −0.1 per char |
+| Missing `<EOS>`            | −0.5          |
+| PAD tokens in output       | −2.0 each     |
+| Unexpected `<SEP>`/`<BOS>` | −2.0 each     |
 
 ---
 
@@ -127,10 +127,10 @@ The model is a **Transformer Encoder with a causal mask** (equivalent to a decod
 
 Always evaluated with seed 42.
 
-| Setting | Samples |
-|---|---|
-| In-distribution (len 2–6) | 500 |
-| Out-of-distribution (len 7–15) | 500 |
+| Setting                         | Samples        |
+| ------------------------------- | -------------- |
+| In-distribution (len 2–6)       | 500            |
+| Out-of-distribution (len 7–15)  | 500            |
 | Per-length breakdown (len 2–15) | 1,000 / length |
 
 Metrics: `exact_match` and `no_b_rate` (fraction of outputs with zero "b"s).
@@ -147,17 +147,18 @@ uv sync
 
 # Train SFT model (requires wandb login)
 wandb login
-python mini_gpt_reverse.py
+uv run mini_gpt_reverse.py
 
 # Train RL model (loads SFT checkpoint)
-python mini_gpt_reverse_skip_b_rl.py
+uv run mini_gpt_reverse_skip_b_rl.py
 
 # Evaluate both models
-python evaluate_model.py
+uv run evaluate_model.py
 
 # Quick inference
-python load_model_mini_gpt_reverse.py           # SFT
-python load_model_mini_gpt_reverse_skip_b_rl.py # RL
+uv run load_model_mini_gpt_reverse.py           # SFT
+uv run load_model_mini_gpt_reverse_skip_b_rl.py # RL
+uv run demo.py
 ```
 
 Checkpoints (`*.pth`) are included in the repo — you can run inference and evaluation without retraining.
