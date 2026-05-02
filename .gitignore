@@ -8,4 +8,16 @@ wheels/
 
 # Virtual environments
 .venv
-wandb
+
+# Experiment logs
+wandb/
+
+# Build artifacts
+target/
+
+# Scratch / internal files
+test.txt
+PLAN.md
+
+# Claude Code internal settings
+.claude/
