@@ -191,7 +191,7 @@ def main():
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", factor=0.5, patience=2)
 
     best_val_loss = float("inf")
-    best_model_path = "best_mini_gpt_reverse.pth"
+    best_model_path = "checkpoints/best_mini_gpt_reverse.pth"
 
     # Training
     for epoch in range(cfg.num_epochs):

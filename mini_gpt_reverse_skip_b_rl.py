@@ -208,7 +208,7 @@ def rl_finetune(
     kl_coef=0.1,
     entropy_coef=0.01,
     curriculum_steps=2000,
-    checkpoint_path="best_mini_gpt_reverse_skip_b_rl.pth",
+    checkpoint_path="checkpoints/best_mini_gpt_reverse_skip_b_rl.pth",
     model_config=None,
 ):
     """RL fine-tuning ด้วย GRPO + Curriculum Learning
@@ -361,8 +361,8 @@ def main():
     set_seed(42)
     device = torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
 
-    sft_checkpoint_path = "best_mini_gpt_reverse.pth"
-    rl_checkpoint_path = "best_mini_gpt_reverse_skip_b_rl.pth"
+    sft_checkpoint_path = "checkpoints/best_mini_gpt_reverse.pth"
+    rl_checkpoint_path = "checkpoints/best_mini_gpt_reverse_skip_b_rl.pth"
 
     checkpoint = torch.load(sft_checkpoint_path, map_location=device)
     base_config = checkpoint["config"]

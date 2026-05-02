@@ -58,11 +58,11 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
     print(f"Device: {device}\n")
 
-    sft_ckpt = torch.load("best_mini_gpt_reverse.pth", map_location=device)
-    rl_ckpt_full = torch.load("best_mini_gpt_reverse_skip_b_rl.pth", map_location=device)
+    sft_ckpt = torch.load("checkpoints/best_mini_gpt_reverse.pth", map_location=device)
+    rl_ckpt_full = torch.load("checkpoints/best_mini_gpt_reverse_skip_b_rl.pth", map_location=device)
 
-    sft_model = load_model("best_mini_gpt_reverse.pth", sft_ckpt["config"], device)
-    rl_model = load_model("best_mini_gpt_reverse_skip_b_rl.pth", rl_ckpt_full["config"], device)
+    sft_model = load_model("checkpoints/best_mini_gpt_reverse.pth", sft_ckpt["config"], device)
+    rl_model = load_model("checkpoints/best_mini_gpt_reverse_skip_b_rl.pth", rl_ckpt_full["config"], device)
 
     saved_step = rl_ckpt_full.get("step", "?")
     saved_best = rl_ckpt_full.get("best_exact_match", "?")

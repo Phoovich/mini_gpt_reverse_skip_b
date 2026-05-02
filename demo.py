@@ -38,8 +38,8 @@ def main():
     print(f"\nDevice: {device}")
 
     print("\nLoading models...")
-    sft_model = load_model("best_mini_gpt_reverse.pth", device)
-    rl_model  = load_model("best_mini_gpt_reverse_skip_b_rl.pth", device)
+    sft_model = load_model("checkpoints/best_mini_gpt_reverse.pth", device)
+    rl_model  = load_model("checkpoints/best_mini_gpt_reverse_skip_b_rl.pth", device)
     print("Models loaded.\n")
 
     # ── Stage 1: SFT — sequence reversal ────────────────────────────────────

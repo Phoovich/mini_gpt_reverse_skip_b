@@ -10,9 +10,9 @@ Two-stage training of a Transformer decoder to (1) reverse character sequences a
 | Resource | Description |
 |---|---|
 | [`teaching-site/index.html`](teaching-site/index.html) | Interactive explainer — architecture, SFT, RL, results |
-| [`embedding_viz.html`](embedding_viz.html) | Token embeddings & positional encoding visualization |
-| [`viz.html`](viz.html) | Training curves & reward landscape |
-| [`report.pdf`](report.pdf) | Full project report (Thai) |
+| [`viz/embedding_viz.html`](viz/embedding_viz.html) | Token embeddings & positional encoding visualization |
+| [`viz/viz.html`](viz/viz.html) | Training curves & reward landscape |
+| [`report/report.pdf`](report/report.pdf) | Full project report (Thai) |
 
 ---
 
@@ -58,20 +58,26 @@ The model is a **Transformer Encoder with a causal mask** (equivalent to a decod
 
 ```
 .
-├── model.py                            # MiniGPT class + greedy decode
-├── vocab.py                            # Fixed vocabulary (30 tokens)
-├── mini_gpt_reverse.py                 # Stage 1: SFT training loop
-├── mini_gpt_reverse_skip_b_rl.py       # Stage 2: GRPO RL training
-├── evaluate_model.py                   # Comprehensive evaluation
-├── load_model_mini_gpt_reverse.py      # Quick SFT inference
-├── load_model_mini_gpt_reverse_skip_b_rl.py  # Quick RL inference
-├── demo.py                             # Interactive demo
-├── best_mini_gpt_reverse.pth           # SFT checkpoint
-├── best_mini_gpt_reverse_skip_b_rl.pth # RL checkpoint (step 9,400)
-├── report.typ / report.pdf             # Project report
-├── teaching-site/                      # Interactive web explainer
-├── embedding_viz.html                  # Embedding visualization
-└── viz.html                            # Training visualization
+├── model.py                                   # MiniGPT class + greedy decode
+├── vocab.py                                   # Fixed vocabulary (30 tokens)
+├── mini_gpt_reverse.py                        # Stage 1: SFT training
+├── mini_gpt_reverse_skip_b_rl.py              # Stage 2: GRPO RL training
+├── evaluate_model.py                          # Comprehensive evaluation
+├── load_model_mini_gpt_reverse.py             # Quick SFT inference
+├── load_model_mini_gpt_reverse_skip_b_rl.py   # Quick RL inference
+├── demo.py                                    # Interactive demo
+├── checkpoints/
+│   ├── best_mini_gpt_reverse.pth              # SFT checkpoint
+│   └── best_mini_gpt_reverse_skip_b_rl.pth   # RL checkpoint (step 9,400)
+├── report/
+│   ├── report.typ                             # Typst source
+│   └── report.pdf                             # Compiled report (Thai)
+├── viz/
+│   ├── embedding_viz.html                     # Token embedding visualization
+│   └── viz.html                               # Training curves & reward landscape
+├── assets/
+│   └── Lecture01_MiniProject.pdf              # Original assignment sheet
+└── teaching-site/                             # Interactive web explainer
 ```
 
 ---

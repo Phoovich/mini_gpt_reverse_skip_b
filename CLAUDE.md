@@ -27,7 +27,7 @@ uv sync  # requires Python >= 3.11.13
 python mini_gpt_reverse.py
 ```
 
-Saves checkpoint to `best_mini_gpt_reverse.pth` (saved when val_loss improves). Requires wandb login (`wandb login`). wandb project: `mini-gpt-reverse-sequence`.
+Saves checkpoint to `checkpoints/best_mini_gpt_reverse.pth` (saved when val_loss improves). Requires wandb login (`wandb login`). wandb project: `mini-gpt-reverse-sequence`.
 
 ### Train RL model
 
@@ -35,7 +35,7 @@ Saves checkpoint to `best_mini_gpt_reverse.pth` (saved when val_loss improves). 
 python mini_gpt_reverse_skip_b_rl.py
 ```
 
-Loads `best_mini_gpt_reverse.pth`, saves RL checkpoint to `best_mini_gpt_reverse_skip_b_rl.pth` (saved when exact_match improves). wandb project: `mini-gpt-reverse-sequence-rl`.
+Loads `checkpoints/best_mini_gpt_reverse.pth`, saves RL checkpoint to `checkpoints/best_mini_gpt_reverse_skip_b_rl.pth` (saved when exact_match improves). wandb project: `mini-gpt-reverse-sequence-rl`.
 
 ### Evaluate both models
 
@@ -97,7 +97,7 @@ Key defaults: `num_steps=15000`, `rl_lr=3e-5`, `batch_size=8`, `grpo_g=4`, `kl_c
 
 ### Checkpoints
 
-Both `.pth` files store `{"model_state", "stoi", "itos", "config"}`. The RL checkpoint also stores `"best_exact_match"` and `"step"`. SFT checkpoint is saved on best val_loss; RL checkpoint is saved on best exact_match.
+Both `.pth` files are stored under `checkpoints/` and contain `{"model_state", "stoi", "itos", "config"}`. The RL checkpoint also stores `"best_exact_match"` and `"step"`. SFT checkpoint is saved on best val_loss; RL checkpoint is saved on best exact_match.
 
 ---
 
