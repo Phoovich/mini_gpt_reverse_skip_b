@@ -348,7 +348,7 @@ RL model บันทึก checkpoint ที่ *step 9,400* ด้วย best_
     [ทุกตัวเป็น `b`], [`bbbbb`], [(ว่าง)], [(ว่าง)], [✓],
     [ไม่มีตัว `b` เลย], [`qwerty`], [`ytrewq`], [`ytrewq`], [✓],
     [ตัวอักษรตัวเดียว], [`a`], [`a`], [`a`], [✓],
-    [`b` ตัวเดียว], [`b`], [`j`], [(ว่าง)], [✗],
+    [`b` ตัวเดียว], [`b`], [(ว่าง)], [(ว่าง)], [✓],
     [ยาวมาก + มี `b`], [`basketball`], [`llabteksa`], [`llateksa`], [✗],
     [ทุกตัวเหมือนกัน], [`aaaaa`], [`aaaaa`], [`aaaaa`], [✓],
   ),
@@ -375,10 +375,7 @@ RL model บันทึก checkpoint ที่ *step 9,400* ด้วย best_
 
 == วิเคราะห์ Edge Cases
 
-กรณีที่น่าสนใจคือ `b` ตัวเดียว (input = `"b"`) ที่โมเดล predict เป็น `j` แทน empty sequence มีสาเหตุที่เป็นไปได้ดังนี้:
-1. ใน training set sequences ที่เป็น `b` ล้วนพบน้อยมาก เพราะ `min_len=2` ทำให้ sequence ยาว 1 ตัวไม่ถูกสุ่ม (จริงๆ single-char ก็ไม่ควรปรากฏใน training)
-2. โมเดลมี prior จาก SFT ว่าต้อง generate ตัวอักษรอย่างน้อย 1 ตัวก่อน `<EOS>`
-3. Length penalty (-0.1×|Δlen|) อาจไม่แรงพอที่จะ overcome prior นี้
+กรณี `b` ตัวเดียว (input = `"b"`) โมเดล RL สามารถ predict ได้ถูกต้องเป็น empty sequence ซึ่งแสดงให้เห็นว่า penalty สำหรับตัว `b` ใน reward function มีความแรงเพียงพอที่จะ override prior จาก SFT ที่ให้โมเดล generate อย่างน้อย 1 ตัวอักษรก่อน `<EOS>` แม้ว่า sequence ความยาว 1 จะไม่ปรากฏใน training distribution (`min_len=2`) ก็ตาม
 
 กรณี `basketball` ที่ยาวเกิน training range แสดง pattern การ reverse บางส่วนแต่ไม่สมบูรณ์ ซึ่งสอดคล้องกับ per-length breakdown ที่ len=10 ยังมี exact_match 23%
 

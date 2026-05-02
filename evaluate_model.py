@@ -26,7 +26,7 @@ def target_skip_b(seq):
     return [ch for ch in reversed(seq) if ch != "b"]
 
 
-def per_length_breakdown(model, device, lengths, samples_per_length=100, seed=42):
+def per_length_breakdown(model, device, lengths, samples_per_length=1000, seed=42):
     results = {}
     rng = random.Random(seed)
     for length in lengths:

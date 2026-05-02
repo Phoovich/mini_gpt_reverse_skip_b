@@ -1,0 +1,2015 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MiniGPT — Interactive Architecture & Training Visualizer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Fira+Code:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
+<style>
+/* ── Reset & Base ─────────────────────────────────────── */
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#0a0e1a;--card:#111827;--card2:#0f1629;--border:#1e293b;
+  --blue:#60a5fa;--green:#34d399;--red:#f87171;--purple:#a78bfa;
+  --orange:#fb923c;--yellow:#fbbf24;
+  --text:#e2e8f0;--muted:#64748b;--dim:#374151;
+  --sidebar:220px;
+}
+html{scroll-behavior:smooth}
+body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);display:flex;min-height:100vh;overflow-x:hidden}
+h1,h2,h3,h4{font-weight:600;line-height:1.3}
+p{line-height:1.7;color:#94a3b8}
+code,pre,kbd,.mono{font-family:'Fira Code',monospace}
+button{cursor:pointer;font-family:inherit}
+input[type=range]{cursor:pointer;accent-color:var(--blue)}
+input[type=text],input[type=number]{font-family:'Fira Code',monospace;background:var(--card2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:6px 10px;outline:none}
+input[type=text]:focus,input[type=number]:focus{border-color:var(--blue)}
+svg text{font-family:'Inter',sans-serif;fill:var(--text)}
+
+/* ── Sidebar Navigation ───────────────────────────────── */
+#sidebar{
+  position:fixed;top:0;left:0;width:var(--sidebar);height:100vh;
+  background:var(--card2);border-right:1px solid var(--border);
+  display:flex;flex-direction:column;padding:24px 0;z-index:100;
+  overflow-y:auto;
+}
+.sidebar-logo{padding:0 20px 24px;border-bottom:1px solid var(--border)}
+.sidebar-logo h1{font-size:1rem;color:var(--blue);letter-spacing:.5px}
+.sidebar-logo p{font-size:.7rem;color:var(--muted);margin-top:4px}
+.nav-items{padding:16px 0;flex:1}
+.nav-item{
+  display:flex;align-items:center;gap:10px;padding:9px 20px;
+  cursor:pointer;color:var(--muted);font-size:.8rem;font-weight:500;
+  transition:all .2s;border-left:2px solid transparent;text-decoration:none;
+}
+.nav-item:hover{color:var(--text);background:rgba(96,165,250,.06)}
+.nav-item.active{color:var(--blue);background:rgba(96,165,250,.08);border-left-color:var(--blue)}
+.nav-num{
+  width:20px;height:20px;border-radius:50%;background:var(--border);
+  display:flex;align-items:center;justify-content:center;font-size:.65rem;flex-shrink:0;
+}
+.nav-item.active .nav-num{background:var(--blue);color:#0a0e1a}
+.sidebar-footer{padding:16px 20px;border-top:1px solid var(--border);font-size:.7rem;color:var(--muted)}
+
+/* ── Main Content ─────────────────────────────────────── */
+#content{margin-left:var(--sidebar);flex:1;min-width:0}
+section{min-height:100vh;padding:64px 56px;border-bottom:1px solid var(--border);position:relative}
+.section-header{margin-bottom:40px}
+.section-tag{font-size:.7rem;font-weight:600;letter-spacing:1.5px;text-transform:uppercase;color:var(--blue);margin-bottom:8px}
+.section-title{font-size:2rem;font-weight:700;margin-bottom:12px}
+.section-desc{font-size:.95rem;color:#94a3b8;max-width:680px}
+
+/* ── Cards ────────────────────────────────────────────── */
+.card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:24px}
+.card-sm{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:16px}
+.card-title{font-size:.75rem;font-weight:600;text-transform:uppercase;letter-spacing:1px;color:var(--muted);margin-bottom:14px}
+.two-col{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+.three-col{display:grid;grid-template-columns:1fr 1fr 1fr;gap:20px}
+
+/* ── Buttons ──────────────────────────────────────────── */
+.btn{
+  display:inline-flex;align-items:center;gap:7px;padding:8px 18px;border-radius:7px;
+  font-size:.8rem;font-weight:600;border:none;transition:all .2s;
+}
+.btn-primary{background:var(--blue);color:#0a0e1a}
+.btn-primary:hover{background:#93c5fd;transform:translateY(-1px)}
+.btn-outline{background:transparent;color:var(--blue);border:1px solid var(--blue)}
+.btn-outline:hover{background:rgba(96,165,250,.1)}
+.btn-sm{padding:5px 12px;font-size:.75rem}
+.btn-ghost{background:transparent;color:var(--muted);border:1px solid var(--border)}
+.btn-ghost:hover{color:var(--text);border-color:var(--dim)}
+
+/* ── Token boxes ──────────────────────────────────────── */
+.token-row{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.token{
+  display:inline-flex;flex-direction:column;align-items:center;gap:2px;
+  padding:6px 10px;border-radius:6px;font-size:.8rem;font-weight:600;
+  border:1px solid transparent;transition:all .2s;cursor:default;
+  animation:tokenSlide .4s ease both;
+}
+.token:hover{transform:translateY(-2px);filter:brightness(1.2)}
+.token-label{font-size:.55rem;color:var(--muted);font-weight:400}
+.tok-special{background:rgba(167,139,250,.15);border-color:rgba(167,139,250,.4);color:var(--purple)}
+.tok-input{background:rgba(96,165,250,.12);border-color:rgba(96,165,250,.35);color:var(--blue)}
+.tok-output{background:rgba(52,211,153,.12);border-color:rgba(52,211,153,.35);color:var(--green)}
+.tok-pad{background:rgba(55,65,81,.3);border-color:rgba(55,65,81,.5);color:var(--dim)}
+
+/* ── Animations ───────────────────────────────────────── */
+@keyframes tokenSlide{from{opacity:0;transform:translateX(-20px)}to{opacity:1;transform:translateX(0)}}
+@keyframes fadeUp{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:translateY(0)}}
+@keyframes glow{50%{box-shadow:0 0 24px 6px rgba(96,165,250,.45)}}
+@keyframes dataFlow{0%{top:0%;opacity:0}10%{opacity:1}90%{opacity:1}100%{top:100%;opacity:0}}
+@keyframes pulse{0%,100%{opacity:.6}50%{opacity:1}}
+@keyframes typewriter{from{width:0}to{width:100%}}
+@keyframes blink{50%{border-color:transparent}}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+.animate-on-scroll{opacity:0;transform:translateY(20px);transition:opacity .6s ease,transform .6s ease}
+.animate-on-scroll.visible{opacity:1;transform:translateY(0)}
+
+/* ── Tooltip ──────────────────────────────────────────── */
+#tooltip{
+  position:fixed;z-index:999;background:#0f1629;border:1px solid var(--border);
+  border-radius:8px;padding:10px 14px;font-size:.78rem;pointer-events:none;
+  max-width:240px;line-height:1.5;opacity:0;transition:opacity .15s;
+}
+#tooltip.visible{opacity:1}
+
+/* ── Arch diagram ─────────────────────────────────────── */
+.arch-stack{display:flex;flex-direction:column;gap:0;position:relative}
+.arch-layer{
+  background:var(--card2);border:1px solid var(--border);border-radius:8px;
+  padding:12px 16px;cursor:pointer;transition:all .25s;position:relative;overflow:hidden;
+}
+.arch-layer::before{content:'';position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--blue);opacity:.4;transition:opacity .2s}
+.arch-layer:hover::before,.arch-layer.active::before{opacity:1}
+.arch-layer.active{border-color:var(--blue);box-shadow:0 0 20px rgba(96,165,250,.2);animation:glow .8s ease}
+.arch-layer-title{font-size:.82rem;font-weight:600;color:var(--text)}
+.arch-layer-sub{font-size:.7rem;color:var(--muted);margin-top:3px}
+.arch-connector{height:20px;display:flex;align-items:center;justify-content:center}
+.arch-connector::before{content:'';display:block;width:1px;height:100%;background:var(--border)}
+.arch-expanded{background:rgba(96,165,250,.05);border:1px solid rgba(96,165,250,.2);border-radius:6px;padding:12px;margin-top:10px;display:none}
+.arch-expanded.open{display:block}
+.sub-layer{display:flex;align-items:center;gap:8px;padding:5px 0;font-size:.72rem;color:#94a3b8}
+.sub-layer-icon{width:6px;height:6px;border-radius:50%;background:var(--blue);flex-shrink:0}
+.particles-container{position:absolute;inset:0;pointer-events:none;overflow:hidden;border-radius:8px}
+.particle{position:absolute;width:5px;height:5px;border-radius:50%;background:var(--blue);animation:dataFlow 1.8s ease infinite;opacity:0}
+
+/* ── Loss chart ───────────────────────────────────────── */
+.chart-container{position:relative}
+
+/* ── Reward calculator ────────────────────────────────── */
+.reward-total{font-size:2.5rem;font-weight:700;transition:color .3s}
+.chip{
+  display:inline-flex;align-items:center;padding:4px 12px;border-radius:20px;
+  font-size:.72rem;font-weight:500;cursor:pointer;border:1px solid var(--border);
+  background:var(--card2);color:var(--muted);transition:all .2s;margin:3px;
+}
+.chip:hover{border-color:var(--blue);color:var(--blue);background:rgba(96,165,250,.08)}
+
+/* ── GRPO tree ────────────────────────────────────────── */
+.grpo-formula{
+  background:var(--card2);border:1px solid var(--border);border-radius:8px;
+  padding:16px 20px;font-size:.78rem;line-height:2;
+}
+.formula-line{display:flex;align-items:center;gap:8px;padding:3px 0}
+.formula-val{background:rgba(96,165,250,.15);border-radius:4px;padding:1px 6px;color:var(--blue);font-size:.72rem;transition:all .3s}
+
+/* ── KL section ───────────────────────────────────────── */
+.kl-value{font-size:3rem;font-weight:700;color:var(--red);transition:all .3s;font-variant-numeric:tabular-nums}
+
+/* ── Entropy section ──────────────────────────────────── */
+.entropy-formula{
+  overflow:hidden;white-space:nowrap;font-family:'Fira Code',monospace;
+  font-size:1rem;border-right:2px solid var(--blue);display:inline-block;
+  animation:typewriter 1.5s steps(30) forwards,blink .75s step-end infinite;
+  animation-play-state:paused;
+}
+.entropy-formula.typing{animation-play-state:running}
+.h-value{font-size:2rem;font-weight:700;font-variant-numeric:tabular-nums;transition:all .3s}
+
+/* ── Curriculum ───────────────────────────────────────── */
+.phase-badge{
+  display:inline-flex;align-items:center;gap:6px;padding:4px 12px;border-radius:20px;
+  font-size:.75rem;font-weight:600;border:1px solid;
+}
+
+/* ── Misc ─────────────────────────────────────────────── */
+.label{font-size:.7rem;font-weight:600;text-transform:uppercase;letter-spacing:1px;color:var(--muted);margin-bottom:6px}
+.divider{height:1px;background:var(--border);margin:20px 0}
+.badge{
+  display:inline-flex;padding:2px 8px;border-radius:4px;font-size:.68rem;font-weight:600;
+}
+.badge-blue{background:rgba(96,165,250,.15);color:var(--blue)}
+.badge-green{background:rgba(52,211,153,.15);color:var(--green)}
+.badge-red{background:rgba(248,113,113,.15);color:var(--red)}
+.badge-purple{background:rgba(167,139,250,.15);color:var(--purple)}
+.info-box{background:rgba(96,165,250,.06);border:1px solid rgba(96,165,250,.2);border-radius:8px;padding:14px 16px;font-size:.82rem;color:#93c5fd;line-height:1.6}
+.warn-box{background:rgba(251,191,36,.06);border:1px solid rgba(251,191,36,.2);border-radius:8px;padding:14px 16px;font-size:.82rem;color:#fcd34d;line-height:1.6}
+.gap-12{gap:12px}
+.mt-16{margin-top:16px}
+.mt-24{margin-top:24px}
+.mt-32{margin-top:32px}
+.flex{display:flex}
+.items-center{align-items:center}
+.justify-between{justify-content:space-between}
+.flex-col{flex-direction:column}
+
+/* ── Slider styles ─────────────────────────────────────── */
+.slider-row{display:flex;align-items:center;gap:12px;margin-top:10px}
+.slider-label{font-size:.75rem;color:var(--muted);min-width:100px}
+.slider-val{font-size:.75rem;font-family:'Fira Code',monospace;color:var(--blue);min-width:40px;text-align:right}
+input[type=range]{flex:1;height:4px;border-radius:2px}
+
+/* ── Embedding simplified view ─────────────────────────── */
+.tok-selector-btn{
+  display:inline-flex;flex-direction:column;align-items:center;gap:2px;
+  padding:6px 10px;border-radius:6px;font-size:.78rem;font-weight:600;
+  border:1px solid var(--border);background:var(--card2);cursor:pointer;transition:all .2s;color:var(--muted);
+}
+.tok-selector-btn:hover{border-color:var(--blue);color:var(--blue)}
+.tok-selector-btn.selected{border-color:var(--blue);background:rgba(96,165,250,.12);color:var(--blue)}
+.emb-col{flex:1;min-width:0;display:flex;flex-direction:column;gap:6px}
+.emb-col-title{font-size:.7rem;font-weight:700;text-transform:uppercase;letter-spacing:.8px;text-align:center;padding:6px 0}
+.emb-operator{font-size:2rem;font-weight:300;color:var(--muted);align-self:center;padding:0 10px;flex-shrink:0;padding-top:28px}
+.emb-row{display:flex;align-items:center;gap:0;margin-bottom:3px;position:relative}
+.emb-dim-label{font-size:.65rem;color:var(--muted);width:32px;flex-shrink:0;text-align:right;padding-right:6px;font-family:'Fira Code',monospace}
+.emb-bar-track{flex:1;height:20px;background:var(--card2);border-radius:3px;position:relative;overflow:visible;border:1px solid var(--border)}
+.emb-bar-fill{height:100%;border-radius:3px;transition:width .4s cubic-bezier(.4,0,.2,1),background .3s;position:absolute;top:0}
+.emb-bar-fill.pos{left:50%}
+.emb-bar-fill.neg{right:50%}
+.emb-bar-zero{position:absolute;left:50%;top:0;bottom:0;width:1px;background:var(--border)}
+.emb-val{font-size:.63rem;font-family:'Fira Code',monospace;width:44px;flex-shrink:0;padding-left:5px;transition:color .3s}
+.insight-box{border-radius:10px;border:1px solid rgba(251,191,36,.25);background:rgba(251,191,36,.05);padding:16px 20px}
+.cmp-col{flex:1;min-width:0;padding:14px;border-radius:8px;border:1px solid var(--border);background:var(--card2)}
+.cmp-header{font-size:.75rem;font-weight:600;margin-bottom:10px;text-align:center}
+@keyframes barGrow{from{width:0}to{width:var(--target-w)}}
+</style>
+</head>
+<body>
+
+<!-- Sidebar -->
+<nav id="sidebar">
+  <div class="sidebar-logo">
+    <h1>MiniGPT Viz</h1>
+    <p>Architecture & Training</p>
+  </div>
+  <div class="nav-items" id="nav-items"></div>
+  <div class="sidebar-footer">d_model=256 · nhead=8 · layers=4</div>
+</nav>
+
+<!-- Tooltip -->
+<div id="tooltip"></div>
+
+<!-- Main Content -->
+<main id="content">
+
+<!-- ══ S1: DATA PREPARATION ══════════════════════════════ -->
+<section id="s1">
+<div class="section-header animate-on-scroll">
+  <div class="section-tag">Step 1</div>
+  <h2 class="section-title">Data Preparation</h2>
+  <p class="section-desc">How raw character sequences become tokenized training pairs, and why padding is essential for batching variable-length sequences.</p>
+</div>
+
+<div class="two-col animate-on-scroll" style="align-items:start">
+  <!-- Token sequence builder -->
+  <div class="card">
+    <div class="card-title">Sequence Construction</div>
+    <div style="display:flex;gap:8px;margin-bottom:16px;align-items:center">
+      <input type="text" id="word-input" maxlength="6" value="hello" placeholder="enter word (max 6)" style="width:160px">
+      <div style="display:flex;gap:6px">
+        <button class="btn btn-sm btn-outline" id="sft-toggle" onclick="DataPrepModule.setMode('sft')">SFT</button>
+        <button class="btn btn-sm btn-ghost" id="rl-toggle" onclick="DataPrepModule.setMode('rl')">RL</button>
+      </div>
+    </div>
+    <div class="label">Full sequence sent to model:</div>
+    <div id="token-sequence" class="token-row" style="margin:12px 0 8px"></div>
+    <div id="dp-mode-note" class="info-box" style="margin-top:12px;font-size:.75rem"></div>
+    <div class="divider"></div>
+    <div class="label">Vocabulary (30 tokens total):</div>
+    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:8px">
+      <span class="badge badge-purple">&lt;PAD&gt;=0</span>
+      <span class="badge badge-purple">&lt;BOS&gt;=1</span>
+      <span class="badge badge-purple">&lt;SEP&gt;=2</span>
+      <span class="badge badge-purple">&lt;EOS&gt;=3</span>
+      <span class="badge badge-blue">a=4 … z=29</span>
+    </div>
+  </div>
+
+  <!-- Batch padding -->
+  <div class="card">
+    <div class="card-title">Batch Padding</div>
+    <p style="font-size:.8rem;margin-bottom:16px">Sequences in a batch must have the same length. Shorter sequences are padded with <code>&lt;PAD&gt;</code> tokens; the model ignores these via a <code>src_key_padding_mask</code>.</p>
+    <div id="padding-grid"></div>
+    <div class="info-box" style="margin-top:14px;font-size:.75rem">
+      <strong>Loss ignores PAD:</strong> Cross-entropy is computed with <code>ignore_index=PAD_ID</code>, so padding positions don't affect learning.
+    </div>
+  </div>
+</div>
+
+<!-- Embedding deep dive -->
+<div class="card animate-on-scroll" style="margin-top:20px">
+  <div class="card-title" style="margin-bottom:4px">From Token to Vector — Embedding + Positional Encoding</div>
+
+  <!-- Analogy strip -->
+  <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin:14px 0 20px">
+    <div style="background:rgba(96,165,250,.07);border:1px solid rgba(96,165,250,.2);border-radius:8px;padding:12px">
+      <div style="font-size:.75rem;font-weight:700;color:var(--blue);margin-bottom:5px">① Token Embedding</div>
+      <div style="font-size:.78rem;color:#94a3b8;line-height:1.6">"What <em>is</em> this token?"<br>Each token (e.g. <code>h</code>, <code>e</code>) gets its own unique row of numbers from a learned look-up table.<br><span style="color:var(--muted);font-size:.7rem">Same token always → same embedding</span></div>
+    </div>
+    <div style="background:rgba(167,139,250,.07);border:1px solid rgba(167,139,250,.2);border-radius:8px;padding:12px">
+      <div style="font-size:.75rem;font-weight:700;color:var(--purple);margin-bottom:5px">② Positional Encoding</div>
+      <div style="font-size:.78rem;color:#94a3b8;line-height:1.6">"Where <em>is</em> this token?"<br>A fixed, mathematical pattern (sin/cos waves) is added to tell the model the order. Position 0 ≠ Position 4.<br><span style="color:var(--muted);font-size:.7rem">Same position always → same PE</span></div>
+    </div>
+    <div style="background:rgba(52,211,153,.07);border:1px solid rgba(52,211,153,.2);border-radius:8px;padding:12px">
+      <div style="font-size:.75rem;font-weight:700;color:var(--green);margin-bottom:5px">③ Combined Vector</div>
+      <div style="font-size:.78rem;color:#94a3b8;line-height:1.6">"What is it AND where is it?"<br>Adding them element-wise gives each token a unique fingerprint that encodes both <em>identity</em> and <em>position</em>.<br><span style="color:var(--muted);font-size:.7rem">This goes into the transformer</span></div>
+    </div>
+  </div>
+
+  <!-- Token selector -->
+  <div class="label" style="margin-bottom:8px">Pick a token from the sequence — watch the numbers change:</div>
+  <div id="emb-tok-selector" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:16px"></div>
+
+  <!-- Bar-chart breakdown: 8 dims shown, side by side -->
+  <div style="display:flex;align-items:flex-start;gap:0">
+    <!-- Embedding col -->
+    <div class="emb-col">
+      <div class="emb-col-title" style="color:var(--blue)">
+        Token Embedding<br>
+        <span id="emb-tok-label" style="font-size:.65rem;font-weight:400;color:var(--muted)">row 7 of 30</span>
+      </div>
+      <div id="emb-bars"></div>
+      <div style="font-size:.65rem;color:var(--muted);text-align:center;margin-top:4px">Learned by training<br>(changes token to token)</div>
+    </div>
+
+    <div class="emb-operator">+</div>
+
+    <!-- PE col -->
+    <div class="emb-col">
+      <div class="emb-col-title" style="color:var(--purple)">
+        Positional Encoding<br>
+        <span id="pe-pos-label" style="font-size:.65rem;font-weight:400;color:var(--muted)">position 0</span>
+      </div>
+      <div id="pe-bars"></div>
+      <div style="font-size:.65rem;color:var(--muted);text-align:center;margin-top:4px">Fixed formula: sin/cos<br>(changes position to position)</div>
+    </div>
+
+    <div class="emb-operator" style="color:var(--green)">=</div>
+
+    <!-- Sum col -->
+    <div class="emb-col">
+      <div class="emb-col-title" style="color:var(--green)">
+        Input to Transformer<br>
+        <span style="font-size:.65rem;font-weight:400;color:var(--muted)">embedding + PE</span>
+      </div>
+      <div id="sum-bars"></div>
+      <div style="font-size:.65rem;color:var(--muted);text-align:center;margin-top:4px">Unique per (token, position)<br>→ fed into all 4 layers</div>
+    </div>
+  </div>
+  <div style="text-align:center;font-size:.68rem;color:var(--muted);margin-top:8px">Showing 8 of 256 dimensions — each dimension is one number in the vector</div>
+
+  <!-- KEY INSIGHT: same token 'l' appears at two positions -->
+  <div class="insight-box" style="margin-top:20px">
+    <div style="font-size:.8rem;font-weight:700;color:var(--yellow);margin-bottom:12px">
+      ⚡ Key Insight — "hello" has two identical 'l' tokens. How does the model tell them apart?
+    </div>
+    <div style="font-size:.78rem;color:#94a3b8;margin-bottom:14px">
+      The embedding for both 'l' tokens is <strong>identical</strong> (same row in the look-up table).
+      But their <strong>positions differ</strong> (pos 3 vs pos 4), so the PE is different → the final combined vectors are different.
+      The model can distinguish them!
+    </div>
+    <div style="display:flex;gap:14px;align-items:flex-start;flex-wrap:wrap">
+      <div class="cmp-col" style="border-color:rgba(96,165,250,.3)">
+        <div class="cmp-header" style="color:var(--blue)">'l' at position 3</div>
+        <div id="cmp-l3-bars"></div>
+      </div>
+      <div style="align-self:center;font-size:1.4rem;color:var(--muted);flex-shrink:0">≠</div>
+      <div class="cmp-col" style="border-color:rgba(167,139,250,.3)">
+        <div class="cmp-header" style="color:var(--purple)">'l' at position 4</div>
+        <div id="cmp-l4-bars"></div>
+      </div>
+    </div>
+    <div style="font-size:.72rem;color:var(--muted);margin-top:10px">
+      Blue segment = shared embedding (identical). Purple segment = PE difference (what makes them unique in context).
+    </div>
+  </div>
+
+  <!-- Position wave: how PE changes across positions for one dimension -->
+  <div style="margin-top:20px">
+    <div class="label" style="margin-bottom:4px">How Positional Encoding varies across positions (dim 0 and dim 1):</div>
+    <p style="font-size:.78rem;margin-bottom:10px">Each dimension oscillates at a different frequency. Dim 0 changes fast; dim 128 barely moves. Together they give each position a unique "fingerprint".</p>
+    <svg id="pe-wave-svg" style="width:100%"></svg>
+  </div>
+</div>
+</section>
+
+<!-- ══ S2: ARCHITECTURE ══════════════════════════════════ -->
+<section id="s2">
+<div class="section-header animate-on-scroll">
+  <div class="section-tag">Step 2</div>
+  <h2 class="section-title">Model Architecture</h2>
+  <p class="section-desc">A single forward pass through MiniGPT: token embedding + sinusoidal positional encoding → 4 Transformer Encoder layers with a causal mask → linear head → logits.</p>
+</div>
+
+<div class="three-col animate-on-scroll" style="align-items:start">
+  <!-- Architecture stack -->
+  <div>
+    <div class="card-title" style="margin-bottom:14px">Forward Pass</div>
+    <div class="arch-stack" id="arch-stack"></div>
+    <div style="margin-top:16px;display:flex;gap:8px;flex-wrap:wrap">
+      <button class="btn btn-primary btn-sm" id="run-fp-btn">▶ Run Forward Pass</button>
+      <button class="btn btn-ghost btn-sm" onclick="ArchModule.reset()">Reset</button>
+    </div>
+  </div>
+
+  <!-- Causal mask -->
+  <div>
+    <div class="card-title" style="margin-bottom:10px">Causal Mask (torch.triu)</div>
+    <div class="slider-row" style="margin-bottom:12px">
+      <span class="slider-label">Seq length</span>
+      <input type="range" id="mask-size" min="4" max="12" value="8" oninput="ArchModule.renderMask(+this.value);document.getElementById('mask-size-val').textContent=this.value">
+      <span class="slider-val" id="mask-size-val">8</span>
+    </div>
+    <svg id="mask-svg" style="width:100%;border-radius:8px;overflow:hidden"></svg>
+    <div class="info-box" style="margin-top:10px;font-size:.73rem">
+      <strong>Blue cells</strong> = positions the model can attend to.<br>
+      <strong>Dark cells</strong> = future positions — blocked by setting logits to −∞.
+    </div>
+  </div>
+
+  <!-- PE chart -->
+  <div>
+    <div class="card-title" style="margin-bottom:10px">Sinusoidal Positional Encoding</div>
+    <svg id="pe-svg" style="width:100%;border-radius:8px"></svg>
+    <div style="margin-top:8px;font-size:.73rem;color:var(--muted)">Each dimension encodes position at a different frequency. Click a line to inspect.</div>
+    <div id="pe-formula" class="card-sm" style="margin-top:10px;font-size:.72rem;font-family:'Fira Code',monospace;display:none"></div>
+  </div>
+</div>
+</section>
+
+<!-- ══ S3: SFT TRAINING ══════════════════════════════════ -->
+<section id="s3">
+<div class="section-header animate-on-scroll">
+  <div class="section-tag">Step 3 · Phase 1</div>
+  <h2 class="section-title">Supervised Fine-Tuning (SFT)</h2>
+  <p class="section-desc">The model learns to imitate demonstrations: given an input sequence, predict the reversed output token-by-token using teacher forcing and cross-entropy loss.</p>
+</div>
+
+<div class="animate-on-scroll">
+  <!-- Teacher forcing -->
+  <div class="card" style="margin-bottom:20px">
+    <div class="card-title">Teacher Forcing — Step Through</div>
+    <p style="font-size:.8rem;margin-bottom:16px">At each position, the model receives the <em>ground-truth</em> previous token (not its own prediction). Cross-entropy loss is computed at every output position.</p>
+    <div style="margin-bottom:8px"><span class="label">Input (shifted right):</span></div>
+    <div id="tf-input" class="token-row" style="margin-bottom:12px"></div>
+    <div style="margin-bottom:8px"><span class="label">Target:</span></div>
+    <div id="tf-target" class="token-row" style="margin-bottom:16px"></div>
+    <div id="tf-arrows" style="position:relative;height:30px;margin-bottom:10px"></div>
+    <div style="display:flex;gap:8px;align-items:center">
+      <button class="btn btn-outline btn-sm" id="tf-prev">← Prev</button>
+      <button class="btn btn-outline btn-sm" id="tf-next">Next →</button>
+      <span id="tf-status" style="font-size:.75rem;color:var(--muted);margin-left:8px"></span>
+    </div>
+  </div>
+
+  <div class="two-col">
+    <!-- Loss chart -->
+    <div class="card">
+      <div class="card-title">Training Curves (40 epochs)</div>
+      <div class="slider-row" style="margin-bottom:8px">
+        <span class="slider-label">Epoch scrubber</span>
+        <input type="range" id="epoch-scrubber" min="0" max="39" value="39" style="flex:1" oninput="SFTModule.scrub(+this.value)">
+        <span class="slider-val" id="epoch-val">39</span>
+      </div>
+      <svg id="sft-loss-svg" style="width:100%"></svg>
+      <div style="display:flex;gap:12px;margin-top:10px;font-size:.72rem">
+        <span style="display:flex;align-items:center;gap:5px"><span style="width:20px;height:2px;background:var(--blue);display:inline-block"></span>Train loss</span>
+        <span style="display:flex;align-items:center;gap:5px"><span style="width:20px;height:2px;background:var(--green);display:inline-block;border-top:2px dashed var(--green)"></span>Val loss</span>
+      </div>
+    </div>
+
+    <!-- SFT config -->
+    <div style="display:flex;flex-direction:column;gap:12px">
+      <div class="card-sm">
+        <div class="card-title">Hyperparameters</div>
+        <div style="font-size:.78rem;display:flex;flex-direction:column;gap:7px">
+          <div class="flex justify-between"><span style="color:var(--muted)">Training samples</span><code>50,000</code></div>
+          <div class="flex justify-between"><span style="color:var(--muted)">Batch size</span><code>64</code></div>
+          <div class="flex justify-between"><span style="color:var(--muted)">Learning rate</span><code>3e-4</code></div>
+          <div class="flex justify-between"><span style="color:var(--muted)">Epochs</span><code>40</code></div>
+          <div class="flex justify-between"><span style="color:var(--muted)">Max seq len</span><code>10</code></div>
+          <div class="flex justify-between"><span style="color:var(--muted)">Grad clip</span><code>1.0</code></div>
+          <div class="flex justify-between"><span style="color:var(--muted)">LR scheduler</span><code>ReduceLROnPlateau</code></div>
+        </div>
+      </div>
+      <div class="card-sm">
+        <div class="card-title">Checkpoint Saved When</div>
+        <div class="info-box" style="font-size:.75rem">val_loss improves → saves <code>{"model_state", "stoi", "itos", "config"}</code> to <code>best_mini_gpt_reverse.pth</code></div>
+      </div>
+      <div class="card-sm">
+        <div class="card-title">Loss Function</div>
+        <code style="font-size:.78rem">CrossEntropyLoss(ignore_index=PAD_ID=0)</code>
+      </div>
+    </div>
+  </div>
+</div>
+</section>
+
+<!-- ══ S4: GRPO ═══════════════════════════════════════════ -->
+<section id="s4">
+<div class="section-header animate-on-scroll">
+  <div class="section-tag">Step 4 · Phase 2</div>
+  <h2 class="section-title">GRPO — Group Relative Policy Optimization</h2>
+  <p class="section-desc">For each training prompt, roll out the policy <strong>4 times</strong>, compute rewards, normalize advantages within the group, then update the policy to favor higher-rewarded outputs.</p>
+</div>
+
+<div class="animate-on-scroll">
+  <div class="two-col" style="align-items:start">
+    <!-- Rollout tree -->
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+        <div class="card-title" style="margin:0">4 Rollouts from 1 Prompt</div>
+        <button class="btn btn-outline btn-sm" id="resample-btn">↺ Resample</button>
+      </div>
+      <svg id="grpo-tree" style="width:100%"></svg>
+      <div id="grpo-rollout-detail" style="margin-top:12px;font-size:.75rem;color:var(--muted)">Hover over a rollout node for details.</div>
+    </div>
+
+    <!-- Advantage + formula -->
+    <div style="display:flex;flex-direction:column;gap:16px">
+      <div class="card">
+        <div class="card-title">Advantage Normalization</div>
+        <svg id="adv-svg" style="width:100%"></svg>
+        <div style="margin-top:10px;font-size:.78rem;text-align:center;font-family:'Fira Code',monospace;color:var(--blue)">
+          A<sub>i</sub> = (r<sub>i</sub> − μ) / (σ + 1e-8)
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-title">Loss Breakdown</div>
+        <div class="grpo-formula" id="grpo-formula">
+          <div class="formula-line"><code style="color:var(--red)">policy_loss</code><span style="color:var(--muted)">=</span><span>−Σ(log_prob × A) / <span class="formula-val" id="fv-total">32</span></span></div>
+          <div class="formula-line"><code style="color:var(--purple)">kl_loss</code><span style="color:var(--muted)">=</span><span>0.2 × Σ(KL) / <span class="formula-val" id="fv-bs">8</span></span></div>
+          <div class="formula-line"><code style="color:var(--yellow)">entropy_bonus</code><span style="color:var(--muted)">=</span><span>−0.005 × Σ(H) / <span class="formula-val" id="fv-total2">32</span></span></div>
+          <div style="border-top:1px solid var(--border);margin-top:8px;padding-top:8px" class="formula-line"><code style="color:var(--green)">loss</code><span style="color:var(--muted)">=</span><span>policy_loss + kl_loss + entropy_bonus</span></div>
+        </div>
+      </div>
+      <div class="card-sm">
+        <div class="card-title">Why Group Relative?</div>
+        <p style="font-size:.78rem">Advantages are normalized <em>within the group of 4</em>, not across the entire batch. This stabilizes training: a rollout is "good" or "bad" relative to its siblings from the same prompt, not an absolute scale.</p>
+      </div>
+    </div>
+  </div>
+</div>
+</section>
+
+<!-- ══ S5: REWARD FUNCTION ═══════════════════════════════ -->
+<section id="s5">
+<div class="section-header animate-on-scroll">
+  <div class="section-tag">Step 5</div>
+  <h2 class="section-title">Reward Function Design</h2>
+  <p class="section-desc">The reward function shapes what the model learns. Enter any source word and a model prediction to see every component computed in real time.</p>
+</div>
+
+<div class="two-col animate-on-scroll" style="align-items:start">
+  <!-- Controls -->
+  <div style="display:flex;flex-direction:column;gap:16px">
+    <div class="card">
+      <div class="card-title">Interactive Reward Calculator</div>
+      <div style="margin-bottom:10px">
+        <div class="label">Source word</div>
+        <input type="text" id="reward-source" value="abc" maxlength="8" style="width:100%">
+      </div>
+      <div style="margin-bottom:10px">
+        <div class="label">RL target (auto-computed)</div>
+        <div id="reward-target-display" style="font-family:'Fira Code',monospace;font-size:.82rem;color:var(--green);padding:6px 0"></div>
+      </div>
+      <div style="margin-bottom:10px">
+        <div class="label">Model prediction (edit me)</div>
+        <input type="text" id="reward-pred" value="ca" maxlength="10" style="width:100%">
+      </div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px">
+        <span class="label" style="width:100%;margin-bottom:2px">Try examples:</span>
+        <span class="chip" onclick="RewardModule.setExample('hello','olleh')">hello→olleh</span>
+        <span class="chip" onclick="RewardModule.setExample('abc','ca')">abc→ca ✓</span>
+        <span class="chip" onclick="RewardModule.setExample('abc','cba')">abc→cba ✗b</span>
+        <span class="chip" onclick="RewardModule.setExample('bat','ta')">bat→ta ✓</span>
+      </div>
+      <div class="divider"></div>
+      <div class="label">Total reward</div>
+      <div class="reward-total" id="reward-total">0.00</div>
+      <div style="margin-top:8px" id="reward-components-list"></div>
+    </div>
+    <div class="card-sm">
+      <div class="card-title">Reward Design Rationale</div>
+      <div style="font-size:.78rem;display:flex;flex-direction:column;gap:8px">
+        <div><span class="badge badge-green">+5.0</span> <strong>Exact match</strong> — strong signal for getting everything right</div>
+        <div><span class="badge badge-green">+0.2×</span> <strong>Positional</strong> — partial credit for correct position</div>
+        <div><span class="badge badge-green">+0.1×</span> <strong>Coverage</strong> — correct chars even if out of order</div>
+        <div><span class="badge badge-red">−1.0×</span> <strong>'b' penalty</strong> — direct punishment for the skip-b task</div>
+        <div><span class="badge badge-red">−0.5</span> <strong>No EOS</strong> — must learn to terminate</div>
+        <div><span class="badge badge-red">−2.0×</span> <strong>PAD/Special tokens</strong> — should never appear in output</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Stacked bar chart -->
+  <div class="card">
+    <div class="card-title">Reward Breakdown</div>
+    <svg id="reward-svg" style="width:100%"></svg>
+  </div>
+</div>
+</section>
+
+<!-- ══ S6: KL PENALTY ════════════════════════════════════ -->
+<section id="s6">
+<div class="section-header animate-on-scroll">
+  <div class="section-tag">Step 6</div>
+  <h2 class="section-title">KL Divergence Penalty</h2>
+  <p class="section-desc">The KL penalty keeps the RL policy from drifting too far from the reference SFT model, preventing catastrophic forgetting of the reversal task while learning to skip 'b'.</p>
+</div>
+
+<div class="two-col animate-on-scroll" style="align-items:start">
+  <div class="card">
+    <div class="card-title">Policy vs Reference Distribution</div>
+    <div class="slider-row" style="margin-bottom:14px">
+      <span class="slider-label">Policy drift</span>
+      <input type="range" id="kl-slider" min="0" max="100" value="10" oninput="KLModule.update(+this.value)">
+      <span class="slider-val" id="kl-drift-val">10%</span>
+    </div>
+    <svg id="kl-svg" style="width:100%"></svg>
+    <div style="display:flex;gap:16px;margin-top:10px;font-size:.72rem">
+      <span style="display:flex;align-items:center;gap:5px"><span style="width:16px;height:3px;background:var(--purple);opacity:.7;display:inline-block"></span>Reference model (SFT)</span>
+      <span style="display:flex;align-items:center;gap:5px"><span style="width:16px;height:3px;background:var(--blue);display:inline-block"></span>Current policy</span>
+      <span style="display:flex;align-items:center;gap:5px"><span style="width:16px;height:3px;background:var(--red);display:inline-block"></span>KL contribution</span>
+    </div>
+  </div>
+
+  <div style="display:flex;flex-direction:column;gap:16px">
+    <div class="card">
+      <div class="card-title">KL Divergence Value</div>
+      <div class="kl-value" id="kl-display">0.00</div>
+      <div style="margin-top:8px;font-size:.8rem;color:var(--muted)">KL(π ∥ π<sub>ref</sub>)</div>
+      <div class="divider"></div>
+      <div class="label">Loss contribution</div>
+      <div style="font-family:'Fira Code',monospace;font-size:.82rem;margin-top:6px">
+        kl_loss = <span style="color:var(--purple)">0.2</span> × <span id="kl-loss-val" style="color:var(--red)">0.00</span> = <span id="kl-total-val" style="color:var(--orange)">0.00</span>
+      </div>
+      <div style="margin-top:8px" class="slider-row">
+        <span class="slider-label" style="font-size:.7rem">kl_coef</span>
+        <input type="range" id="kl-coef-slider" min="0.05" max="0.5" step="0.05" value="0.2" oninput="KLModule.updateCoef(+this.value)">
+        <span class="slider-val" id="kl-coef-val">0.20</span>
+      </div>
+    </div>
+    <div class="card-sm">
+      <div class="card-title">Formula</div>
+      <code style="font-size:.78rem;color:var(--purple)">KL(π∥π<sub>ref</sub>) = Σ π(a|s) log[π(a|s)/π<sub>ref</sub>(a|s)]</code>
+      <div class="divider"></div>
+      <div class="card-title">Why It Matters</div>
+      <p style="font-size:.78rem">Without KL penalty, the RL policy would optimize reward at any cost — possibly forgetting how to reverse sequences at all. The penalty anchors it to the SFT starting point.</p>
+    </div>
+    <div class="card-sm">
+      <div class="card-title">Implementation</div>
+      <code style="font-size:.72rem;color:#94a3b8">kl = (probs * (log_probs − ref_log_probs)).sum(dim=−1).mean()<br>kl_loss = kl_coef × Σ(kl) / batch_size</code>
+    </div>
+  </div>
+</div>
+</section>
+
+<!-- ══ S7: ENTROPY BONUS ═════════════════════════════════ -->
+<section id="s7">
+<div class="section-header animate-on-scroll">
+  <div class="section-tag">Step 7</div>
+  <h2 class="section-title">Entropy Bonus</h2>
+  <p class="section-desc">The entropy bonus discourages the model from collapsing to always predicting the same token. Higher entropy = more diverse, exploratory outputs.</p>
+</div>
+
+<div class="animate-on-scroll">
+  <div class="two-col" style="align-items:start;margin-bottom:20px">
+    <div class="card">
+      <div class="card-title">Peaked Distribution (low entropy)</div>
+      <div class="h-value" id="h-peaked" style="color:var(--orange)">0.00</div>
+      <div style="font-size:.72rem;color:var(--muted);margin-bottom:12px">nats</div>
+      <svg id="ent-peaked-svg" style="width:100%"></svg>
+      <div style="font-size:.78rem;color:#94a3b8;margin-top:8px">Model is very confident — almost always picks the same token. Good for exploitation, bad for exploration.</div>
+    </div>
+    <div class="card">
+      <div class="card-title">Flat Distribution (high entropy)</div>
+      <div class="h-value" id="h-flat" style="color:var(--green)">0.00</div>
+      <div style="font-size:.72rem;color:var(--muted);margin-bottom:12px">nats</div>
+      <svg id="ent-flat-svg" style="width:100%"></svg>
+      <div style="font-size:.78rem;color:#94a3b8;margin-top:8px">Model spreads probability — more exploratory. The entropy bonus encourages this early in RL training.</div>
+    </div>
+  </div>
+
+  <div class="two-col" style="align-items:start">
+    <div class="card">
+      <div class="card-title">Custom Distribution — drag the bars!</div>
+      <svg id="ent-custom-svg" style="width:100%;cursor:ns-resize"></svg>
+      <div style="margin-top:8px;display:flex;align-items:center;gap:12px">
+        <span style="font-size:.78rem;color:var(--muted)">H =</span>
+        <span class="h-value" id="h-custom" style="font-size:1.5rem;color:var(--blue)">0.00</span>
+        <span style="font-size:.72rem;color:var(--muted)">nats</span>
+      </div>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:14px">
+      <div class="card">
+        <div class="card-title">Formula</div>
+        <div class="entropy-formula" id="ent-formula">H = −Σ p(x) log p(x)</div>
+        <div class="divider"></div>
+        <div class="label">Loss contribution</div>
+        <code style="font-size:.78rem">entropy_bonus = −entropy_coef × H</code>
+        <div style="margin-top:6px;font-size:.78rem;color:var(--muted)">Minimizing loss → <em>maximizing</em> entropy</div>
+        <div class="slider-row" style="margin-top:10px">
+          <span class="slider-label" style="font-size:.7rem">entropy_coef</span>
+          <input type="range" id="ent-coef-slider" min="0.001" max="0.02" step="0.001" value="0.005" oninput="EntropyModule.updateCoef(+this.value)">
+          <span class="slider-val" id="ent-coef-val">0.005</span>
+        </div>
+        <div style="margin-top:6px;font-size:.75rem">Bonus with custom dist: <span id="ent-bonus-val" style="color:var(--yellow);font-family:'Fira Code',monospace">0.000</span></div>
+      </div>
+      <div class="card-sm">
+        <div class="card-title">Why Not Too High?</div>
+        <p style="font-size:.78rem">If entropy_coef is too large, the model generates random outputs to maximize entropy — destroying performance. The default <code>0.005</code> is a gentle nudge.</p>
+      </div>
+    </div>
+  </div>
+</div>
+</section>
+
+<!-- ══ S8: CURRICULUM LEARNING ══════════════════════════ -->
+<section id="s8" style="padding-bottom:100px">
+<div class="section-header animate-on-scroll">
+  <div class="section-tag">Step 8</div>
+  <h2 class="section-title">Curriculum Learning</h2>
+  <p class="section-desc">RL training starts with short sequences (length ≤ 3) and gradually increases difficulty every 3,000 steps. Drag the timeline or press Play to see how the task evolves.</p>
+</div>
+
+<div class="animate-on-scroll">
+  <div class="card" style="margin-bottom:20px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+      <div class="card-title" style="margin:0">Training Timeline (15,000 steps)</div>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-primary btn-sm" id="cur-play-btn">▶ Play</button>
+        <button class="btn btn-ghost btn-sm" id="cur-reset-btn">Reset</button>
+      </div>
+    </div>
+    <svg id="curriculum-svg" style="width:100%"></svg>
+    <div style="margin-top:16px;display:flex;gap:16px;flex-wrap:wrap">
+      <div class="phase-badge" style="border-color:var(--yellow);color:var(--yellow);background:rgba(251,191,36,.08)"><span style="width:8px;height:8px;border-radius:50%;background:var(--yellow);display:inline-block"></span>Phase 1: len≤3 (steps 0–3000)</div>
+      <div class="phase-badge" style="border-color:var(--orange);color:var(--orange);background:rgba(251,146,60,.08)"><span style="width:8px;height:8px;border-radius:50%;background:var(--orange);display:inline-block"></span>Phase 2: len≤4 (steps 3001–6000)</div>
+      <div class="phase-badge" style="border-color:#86efac;color:#86efac;background:rgba(134,239,172,.08)"><span style="width:8px;height:8px;border-radius:50%;background:#86efac;display:inline-block"></span>Phase 3: len≤5 (steps 6001–9000)</div>
+      <div class="phase-badge" style="border-color:var(--green);color:var(--green);background:rgba(52,211,153,.08)"><span style="width:8px;height:8px;border-radius:50%;background:var(--green);display:inline-block"></span>Phase 4: len≤6 (steps 9001–15000)</div>
+    </div>
+  </div>
+
+  <div class="two-col" style="align-items:start">
+    <div class="card">
+      <div class="card-title">Current Phase</div>
+      <div style="font-size:1.4rem;font-weight:700;margin-bottom:4px">Step: <span id="cur-step-display" style="color:var(--blue);font-variant-numeric:tabular-nums">0</span></div>
+      <div style="font-size:1rem;color:var(--muted)">cur_max_len = <span id="cur-maxlen-display" style="color:var(--green);font-weight:700;font-size:1.2rem">3</span></div>
+      <div class="divider"></div>
+      <div class="card-title">Example at this phase</div>
+      <div style="margin-bottom:8px"><span class="label">Input:</span></div>
+      <div id="cur-example-input" class="token-row" style="margin-bottom:10px"></div>
+      <div style="margin-bottom:8px"><span class="label">RL Target (reversed, no 'b'):</span></div>
+      <div id="cur-example-target" class="token-row"></div>
+    </div>
+    <div class="card">
+      <div class="card-title">Curriculum Formula</div>
+      <code style="font-size:.8rem;line-height:2;display:block">cur_max_len = min(<br>&nbsp;&nbsp;min_len + 1 + (step − 1) // curriculum_steps,<br>&nbsp;&nbsp;max_len<br>)<br><br>= min(3 + (step − 1) // 3000, 6)</code>
+      <div class="divider"></div>
+      <div class="card-title">Why Curriculum?</div>
+      <p style="font-size:.78rem">The skip-b task is hard. Starting with length-3 sequences gives the model early reward signal — it can learn to skip 'b' in "abc" before tackling "abcdef". Gradually increasing length is like teaching arithmetic before algebra.</p>
+      <div class="divider"></div>
+      <div class="card-title">Sequence Sampling</div>
+      <div class="info-box" style="font-size:.75rem"><strong>70%</strong> of training sequences contain at least one 'b' — ensuring the model sees plenty of cases where it must skip characters.</div>
+    </div>
+  </div>
+</div>
+</section>
+
+</main><!-- /content -->
+
+<script>
+// ════════════════════════════════════════════════════════
+//  SHARED UTILITIES
+// ════════════════════════════════════════════════════════
+const VOCAB = { '<PAD>':0,'<BOS>':1,'<SEP>':2,'<EOS>':3 };
+'abcdefghijklmnopqrstuvwxyz'.split('').forEach((c,i)=>VOCAB[c]=i+4);
+
+function charId(c){ return VOCAB[c]??-1 }
+function makeToken(tok){
+  const el=document.createElement('div');
+  el.className='token '+(
+    ['<PAD>','<BOS>','<SEP>','<EOS>'].includes(tok)?'tok-special':
+    tok==='<pad-fill>'?'tok-pad':'tok-input');
+  el.innerHTML=`<span>${tok==='<pad-fill>'?'&lt;PAD&gt;':tok}</span><span class="token-label">id:${tok==='<pad-fill>'?0:charId(tok)}</span>`;
+  return el;
+}
+function makeOutputToken(tok){
+  const el=makeToken(tok);
+  if(!['<PAD>','<BOS>','<SEP>','<EOS>'].includes(tok)&&tok!=='<pad-fill>')
+    el.className='token tok-output';
+  return el;
+}
+
+// Tooltip
+const TT=document.getElementById('tooltip');
+function showTooltip(e,html){
+  TT.innerHTML=html;TT.classList.add('visible');
+  moveTooltip(e);
+}
+function moveTooltip(e){
+  let x=e.clientX+14,y=e.clientY-10;
+  if(x+240>window.innerWidth)x=e.clientX-254;
+  TT.style.left=x+'px';TT.style.top=y+'px';
+}
+function hideTooltip(){TT.classList.remove('visible')}
+document.addEventListener('mousemove',e=>{if(TT.classList.contains('visible'))moveTooltip(e)});
+
+function sinPE(pos,dim,dModel=256){
+  if(dim%2===0)return Math.sin(pos/Math.pow(10000,dim/dModel));
+  return Math.cos(pos/Math.pow(10000,(dim-1)/dModel));
+}
+function normalizeAdvantages(rewards){
+  const n=rewards.length;
+  const mu=rewards.reduce((a,b)=>a+b,0)/n;
+  const sigma=Math.sqrt(rewards.map(r=>(r-mu)**2).reduce((a,b)=>a+b,0)/n);
+  return rewards.map(r=>(r-mu)/(sigma+1e-8));
+}
+function entropy(dist){
+  return -dist.reduce((s,p)=>p>1e-10?s+p*Math.log(p):s,0);
+}
+function debounce(fn,d){let t;return(...a)=>{clearTimeout(t);t=setTimeout(()=>fn(...a),d)}}
+
+// ════════════════════════════════════════════════════════
+//  NAV MODULE
+// ════════════════════════════════════════════════════════
+const NAV_ITEMS=[
+  {id:'s1',label:'Data Preparation'},
+  {id:'s2',label:'Architecture'},
+  {id:'s3',label:'SFT Training'},
+  {id:'s4',label:'GRPO'},
+  {id:'s5',label:'Reward Function'},
+  {id:'s6',label:'KL Penalty'},
+  {id:'s7',label:'Entropy Bonus'},
+  {id:'s8',label:'Curriculum Learning'},
+];
+const NavModule=(()=>{
+  function init(){
+    const container=document.getElementById('nav-items');
+    NAV_ITEMS.forEach((item,i)=>{
+      const a=document.createElement('a');
+      a.className='nav-item';a.dataset.target=item.id;
+      a.href='#'+item.id;
+      a.innerHTML=`<span class="nav-num">${i+1}</span><span>${item.label}</span>`;
+      container.appendChild(a);
+    });
+  }
+  function setActive(id){
+    document.querySelectorAll('.nav-item').forEach(el=>{
+      el.classList.toggle('active',el.dataset.target===id);
+    });
+  }
+  return{init,setActive};
+})();
+
+// ════════════════════════════════════════════════════════
+//  SCROLL MODULE
+// ════════════════════════════════════════════════════════
+const ScrollModule=(()=>{
+  const cbs={};
+  function init(){
+    const obs=new IntersectionObserver(entries=>{
+      entries.forEach(entry=>{
+        if(entry.isIntersecting){
+          const id=entry.target.id;
+          NavModule.setActive(id);
+          if(cbs[id])cbs[id]();
+          entry.target.querySelectorAll('.animate-on-scroll')
+            .forEach(el=>el.classList.add('visible'));
+        }
+      });
+    },{threshold:0.15,rootMargin:'0px 0px -80px 0px'});
+    document.querySelectorAll('section[id]').forEach(s=>obs.observe(s));
+  }
+  function register(id,cb){cbs[id]=cb}
+  return{init,register};
+})();
+
+// ════════════════════════════════════════════════════════
+//  S1: DATA PREP MODULE
+// ════════════════════════════════════════════════════════
+const DataPrepModule=(()=>{
+  let mode='sft';
+  function buildSequence(word){
+    const seq=[...word];
+    const reversed=[...word].reverse();
+    const tokens=[
+      {tok:'<BOS>',role:'special'},
+      ...seq.map(c=>({tok:c,role:'input'})),
+      {tok:'<SEP>',role:'special'},
+      ...reversed.map(c=>({tok:c,role:'output'})),
+      {tok:'<EOS>',role:'special'},
+    ];
+    return tokens;
+  }
+  function renderSequence(word){
+    const container=document.getElementById('token-sequence');
+    container.innerHTML='';
+    const tokens=buildSequence(word);
+    tokens.forEach((t,i)=>{
+      const el=document.createElement('div');
+      el.className='token tok-'+t.role;
+      el.style.animationDelay=(i*70)+'ms';
+      el.innerHTML=`<span>${t.tok}</span><span class="token-label">id:${charId(t.tok)}</span>`;
+      el.addEventListener('mouseenter',e=>showTooltip(e,`<strong>${t.tok}</strong><br>token_id: ${charId(t.tok)}<br>role: ${t.role}`));
+      el.addEventListener('mouseleave',hideTooltip);
+      container.appendChild(el);
+    });
+    // mode note
+    const note=document.getElementById('dp-mode-note');
+    if(mode==='sft'){
+      note.innerHTML=`<strong>SFT mode:</strong> Target = reversed word (<code>${[...word].reverse().join('')}</code>). Trained on lengths 2–10.`;
+    } else {
+      const rl=[...word].reverse().filter(c=>c!=='b').join('');
+      note.innerHTML=`<strong>RL mode:</strong> Target = reversed, 'b' removed (<code>${rl||'(empty)'}</code>). Trained on lengths 2–6.`;
+    }
+  }
+  function renderPadding(){
+    const words=['hello','cat','programming'];
+    const maxLen=Math.max(...words.map(w=>buildSequence(w).length));
+    const container=document.getElementById('padding-grid');
+    container.innerHTML='';
+    words.forEach(word=>{
+      const tokens=buildSequence(word);
+      const row=document.createElement('div');
+      row.style.cssText='display:flex;gap:4px;flex-wrap:wrap;margin-bottom:8px;align-items:center';
+      row.innerHTML=`<span style="font-size:.65rem;color:var(--muted);min-width:90px;font-family:'Fira Code',monospace">"${word}"</span>`;
+      const tokWrap=document.createElement('div');
+      tokWrap.style.cssText='display:flex;gap:3px;flex-wrap:wrap';
+      tokens.forEach(t=>{
+        const el=document.createElement('div');
+        el.className='token tok-'+t.role;
+        el.style.cssText='padding:3px 6px;font-size:.65rem;animation:none';
+        el.textContent=t.tok==='<BOS>'?'BOS':t.tok==='<SEP>'?'SEP':t.tok==='<EOS>'?'EOS':t.tok;
+        tokWrap.appendChild(el);
+      });
+      for(let i=tokens.length;i<maxLen;i++){
+        const el=document.createElement('div');
+        el.className='token tok-pad';
+        el.style.cssText='padding:3px 6px;font-size:.65rem;animation:none;opacity:.5';
+        el.textContent='PAD';
+        tokWrap.appendChild(el);
+      }
+      row.appendChild(tokWrap);
+      container.appendChild(row);
+    });
+    const info=document.createElement('div');
+    info.style.cssText='font-size:.68rem;color:var(--muted);margin-top:6px';
+    info.textContent=`All sequences padded to length ${maxLen}`;
+    container.appendChild(info);
+  }
+  function setMode(m){
+    mode=m;
+    document.getElementById('sft-toggle').className='btn btn-sm '+(m==='sft'?'btn-outline':'btn-ghost');
+    document.getElementById('rl-toggle').className='btn btn-sm '+(m==='rl'?'btn-outline':'btn-ghost');
+    renderSequence(document.getElementById('word-input').value||'hello');
+  }
+  function init(){
+    renderSequence('hello');
+    renderPadding();
+    const inp=document.getElementById('word-input');
+    inp.addEventListener('input',()=>renderSequence(inp.value||'a'));
+    ScrollModule.register('s1',()=>{});
+  }
+  return{init,setMode,renderSequence};
+})();
+
+// ════════════════════════════════════════════════════════
+//  S2: ARCHITECTURE MODULE
+// ════════════════════════════════════════════════════════
+const ArchModule=(()=>{
+  let running=false;
+  const layers=[
+    {id:'arch-embed',title:'Token Embedding',sub:'vocab_size=30 → d_model=256',expand:null},
+    {id:'arch-pe',title:'+ Sinusoidal PE',sub:'dim=256, max_len=256',expand:null},
+    {id:'arch-t1',title:'Transformer Encoder Layer 1',sub:'nhead=8, head_dim=32, dim_ff=512',expand:true},
+    {id:'arch-t2',title:'Transformer Encoder Layer 2',sub:'nhead=8, head_dim=32, dim_ff=512',expand:true},
+    {id:'arch-t3',title:'Transformer Encoder Layer 3',sub:'nhead=8, head_dim=32, dim_ff=512',expand:true},
+    {id:'arch-t4',title:'Transformer Encoder Layer 4',sub:'nhead=8, head_dim=32, dim_ff=512',expand:true},
+    {id:'arch-lin',title:'Linear Head',sub:'d_model=256 → vocab_size=30 logits',expand:null},
+    {id:'arch-out',title:'Softmax → Next Token',sub:'argmax (greedy) or sample (RL)',expand:null},
+  ];
+  const subLayers=[
+    'Multi-Head Self-Attention (8 heads × 32 dim)',
+    'Add & LayerNorm',
+    'Feed-Forward Network (256 → 512 → 256)',
+    'Add & LayerNorm',
+  ];
+  function init(){
+    const stack=document.getElementById('arch-stack');
+    stack.innerHTML='';
+    layers.forEach((l,i)=>{
+      const div=document.createElement('div');
+      div.className='arch-layer';div.id=l.id;
+      div.innerHTML=`<div class="arch-layer-title">${l.title}</div><div class="arch-layer-sub">${l.sub}</div>`;
+      if(l.expand){
+        const exp=document.createElement('div');
+        exp.className='arch-expanded';exp.id=l.id+'-exp';
+        subLayers.forEach(s=>{
+          exp.innerHTML+=`<div class="sub-layer"><span class="sub-layer-icon"></span><span>${s}</span></div>`;
+        });
+        div.appendChild(exp);
+        div.addEventListener('click',()=>{
+          exp.classList.toggle('open');
+        });
+      }
+      // particles container
+      const pc=document.createElement('div');pc.className='particles-container';div.appendChild(pc);
+      stack.appendChild(div);
+      if(i<layers.length-1){
+        const conn=document.createElement('div');conn.className='arch-connector';stack.appendChild(conn);
+      }
+    });
+    document.getElementById('run-fp-btn').addEventListener('click',runForwardPass);
+    renderMask(8);
+    renderPE();
+  }
+  async function runForwardPass(){
+    if(running)return;running=true;
+    const btn=document.getElementById('run-fp-btn');btn.disabled=true;btn.textContent='Running…';
+    const layerEls=document.querySelectorAll('.arch-layer');
+    for(const el of layerEls){
+      el.classList.add('active');
+      addParticles(el);
+      await new Promise(r=>setTimeout(r,600));
+      el.classList.remove('active');
+    }
+    running=false;btn.disabled=false;btn.textContent='▶ Run Forward Pass';
+  }
+  function addParticles(el){
+    const pc=el.querySelector('.particles-container');
+    if(!pc)return;
+    for(let i=0;i<4;i++){
+      const p=document.createElement('div');p.className='particle';
+      p.style.cssText=`left:${10+Math.random()*80}%;animation-delay:${i*0.15}s;animation-duration:${0.8+Math.random()*.4}s`;
+      pc.appendChild(p);
+      setTimeout(()=>p.remove(),1200);
+    }
+  }
+  function reset(){
+    document.querySelectorAll('.arch-layer').forEach(el=>el.classList.remove('active'));
+    document.querySelectorAll('.arch-expanded').forEach(el=>el.classList.remove('open'));
+  }
+  function renderMask(n){
+    const svgEl=document.getElementById('mask-svg');
+    const W=svgEl.getBoundingClientRect().width||300;
+    const margin={top:24,right:8,bottom:8,left:24};
+    const size=Math.min((W-margin.left-margin.right)/n,(W-margin.left-margin.right)/n);
+    const H=size*n+margin.top+margin.bottom+20;
+    svgEl.setAttribute('height',H);
+    const svg=d3.select('#mask-svg');svg.selectAll('*').remove();
+    const g=svg.append('g').attr('transform',`translate(${margin.left},${margin.top})`);
+    // cells
+    for(let i=0;i<n;i++){
+      for(let j=0;j<n;j++){
+        const attend=j<=i;
+        const cell=g.append('rect')
+          .attr('x',j*size).attr('y',i*size)
+          .attr('width',size-1).attr('height',size-1)
+          .attr('rx',2)
+          .attr('fill',attend?'rgba(96,165,250,0.6)':'rgba(15,22,41,0.9)')
+          .attr('stroke','rgba(30,41,59,0.5)').attr('stroke-width',.5);
+        cell.on('mouseenter',e=>showTooltip(e,`pos <strong>${i}</strong> ${attend?'attends to':'<span style="color:var(--red)">BLOCKED from</span>'} pos <strong>${j}</strong>`));
+        cell.on('mouseleave',hideTooltip);
+      }
+    }
+    // axis labels
+    for(let i=0;i<n;i++){
+      g.append('text').attr('x',-4).attr('y',i*size+size/2).attr('text-anchor','end')
+        .attr('dominant-baseline','middle').attr('font-size',9).attr('fill','#64748b').text(i);
+      g.append('text').attr('x',i*size+size/2).attr('y',-4).attr('text-anchor','middle')
+        .attr('font-size',9).attr('fill','#64748b').text(i);
+    }
+    g.append('text').attr('x',n*size/2).attr('y',n*size+16).attr('text-anchor','middle')
+      .attr('font-size',10).attr('fill','#64748b').text('Key position (j)');
+    g.append('text').attr('transform',`rotate(-90)`).attr('x',-n*size/2).attr('y',-18)
+      .attr('text-anchor','middle').attr('font-size',10).attr('fill','#64748b').text('Query (i)');
+  }
+  function renderPE(){
+    const svgEl=document.getElementById('pe-svg');
+    const W=svgEl.getBoundingClientRect().width||300;
+    const margin={top:16,right:16,bottom:30,left:32};
+    const H=160;svgEl.setAttribute('height',H);
+    const svg=d3.select('#pe-svg');svg.selectAll('*').remove();
+    const g=svg.append('g').attr('transform',`translate(${margin.left},${margin.top})`);
+    const iW=W-margin.left-margin.right,iH=H-margin.top-margin.bottom;
+    const xS=d3.scaleLinear([0,49],[0,iW]);
+    const yS=d3.scaleLinear([-1.1,1.1],[iH,0]);
+    const colorS=d3.scaleSequential(d3.interpolateTurbo).domain([0,7]);
+    const dims=[0,2,4,8,16,32,64,128];
+    const line=d3.line().x((_,i)=>xS(i)).y(v=>yS(v)).curve(d3.curveCatmullRom);
+    dims.forEach((dim,di)=>{
+      const pts=Array.from({length:50},(_,pos)=>sinPE(pos,dim));
+      const path=g.append('path').datum(pts).attr('d',line)
+        .attr('fill','none').attr('stroke',colorS(di)).attr('stroke-width',1.5)
+        .attr('opacity',.7).style('cursor','pointer');
+      path.on('click',()=>{
+        const formula=`PE(pos, dim=${dim}) = ${dim%2===0?'sin':'cos'}(pos / 10000^(${dim}/256))`;
+        const fp=document.getElementById('pe-formula');
+        fp.textContent=formula;fp.style.display='block';
+      });
+      path.on('mouseenter',()=>path.attr('stroke-width',3).attr('opacity',1));
+      path.on('mouseleave',()=>path.attr('stroke-width',1.5).attr('opacity',.7));
+    });
+    g.append('g').attr('transform',`translate(0,${iH})`).call(d3.axisBottom(xS).ticks(5).tickSize(3))
+      .selectAll('text').attr('fill','#64748b').attr('font-size',9);
+    g.append('g').call(d3.axisLeft(yS).ticks(3).tickSize(3))
+      .selectAll('text').attr('fill','#64748b').attr('font-size',9);
+    g.selectAll('.domain,.tick line').attr('stroke','#1e293b');
+    g.append('text').attr('x',iW/2).attr('y',iH+24).attr('text-anchor','middle')
+      .attr('font-size',9).attr('fill','#64748b').text('Token position');
+  }
+  return{init,renderMask,reset};
+})();
+
+// ════════════════════════════════════════════════════════
+//  S3: SFT MODULE
+// ════════════════════════════════════════════════════════
+const SFTModule=(()=>{
+  let tfStep=0;
+  const tfSeq=['h','e','l','l','o'];
+  const inputTokens=['<BOS>',...tfSeq,'<SEP>',...[...tfSeq].reverse()];
+  const targetTokens=[...tfSeq,'<SEP>',...[...tfSeq].reverse(),'<EOS>'];
+
+  function generateSFTCurve(){
+    const data=[];
+    let tl=3.4,vl=3.5;
+    for(let e=0;e<40;e++){
+      const drop=e<5?0.3:e<15?0.15:e<25?0.07:0.02;
+      tl=Math.max(0.18,tl-drop+Math.random()*.04-.02);
+      vl=Math.max(0.22,vl-drop*.9+Math.random()*.06-.03);
+      data.push({epoch:e,train:tl,val:vl});
+    }
+    return data;
+  }
+  let sftData=[];
+  let xS,yS,gEl,svgSel,lrDrops=[10,22];
+
+  function renderTF(){
+    const inp=document.getElementById('tf-input');
+    const tgt=document.getElementById('tf-target');
+    inp.innerHTML='';tgt.innerHTML='';
+    inputTokens.forEach((t,i)=>{
+      const el=document.createElement('div');
+      el.className='token '+(i===tfStep?'tok-output':'tok-input');
+      if(['<BOS>','<SEP>','<EOS>'].includes(t))el.className='token tok-special';
+      if(i===tfStep)el.style.cssText='outline:2px solid var(--orange);outline-offset:2px';
+      el.style.animationDelay='0ms';
+      el.innerHTML=`<span>${t}</span>`;
+      inp.appendChild(el);
+    });
+    targetTokens.forEach((t,i)=>{
+      const el=document.createElement('div');
+      el.className='token '+(i===tfStep?'tok-output':'tok-input');
+      if(['<BOS>','<SEP>','<EOS>'].includes(t))el.className='token tok-special';
+      if(i===tfStep){el.style.cssText='outline:2px solid var(--green);outline-offset:2px'}
+      el.style.animationDelay='0ms';
+      el.innerHTML=`<span>${t}</span>`;
+      tgt.appendChild(el);
+    });
+    document.getElementById('tf-status').textContent=`Position ${tfStep} of ${inputTokens.length-1}`;
+  }
+
+  function renderLoss(epoch){
+    const svgEl=document.getElementById('sft-loss-svg');
+    const W=svgEl.getBoundingClientRect().width||400;
+    const margin={top:16,right:16,bottom:30,left:40};
+    const H=180;svgEl.setAttribute('height',H);
+    const svg=d3.select('#sft-loss-svg');svg.selectAll('*').remove();
+    const g=svg.append('g').attr('transform',`translate(${margin.left},${margin.top})`);
+    const iW=W-margin.left-margin.right,iH=H-margin.top-margin.bottom;
+    xS=d3.scaleLinear([0,39],[0,iW]);
+    yS=d3.scaleLinear([0,3.6],[iH,0]);
+    svgSel=svg;gEl=g;
+    // axes
+    g.append('g').attr('transform',`translate(0,${iH})`)
+      .call(d3.axisBottom(xS).ticks(8).tickSize(3))
+      .selectAll('text').attr('fill','#64748b').attr('font-size',9);
+    g.append('g').call(d3.axisLeft(yS).ticks(5).tickSize(3))
+      .selectAll('text').attr('fill','#64748b').attr('font-size',9);
+    g.selectAll('.domain,.tick line').attr('stroke','#1e293b');
+    g.append('text').attr('x',iW/2).attr('y',iH+24).attr('text-anchor','middle')
+      .attr('font-size',9).attr('fill','#64748b').text('Epoch');
+    // LR drop markers
+    lrDrops.forEach(ep=>{
+      g.append('line').attr('x1',xS(ep)).attr('x2',xS(ep))
+        .attr('y1',0).attr('y2',iH).attr('stroke','rgba(251,191,36,.3)').attr('stroke-dasharray','3,3');
+      g.append('text').attr('x',xS(ep)+3).attr('y',8).attr('font-size',8)
+        .attr('fill','#fbbf24').text('LR÷2');
+    });
+    // best checkpoint
+    const bestEp=sftData.reduce((bi,d,i)=>d.val<sftData[bi].val?i:bi,0);
+    g.append('line').attr('x1',xS(bestEp)).attr('x2',xS(bestEp))
+      .attr('y1',0).attr('y2',iH).attr('stroke','rgba(52,211,153,.4)').attr('stroke-dasharray','4,3');
+    g.append('text').attr('x',xS(bestEp)+3).attr('y',20).attr('font-size',8)
+      .attr('fill','var(--green)').text('ckpt');
+    // lines up to epoch
+    const sub=sftData.slice(0,epoch+1);
+    const lineGen=d3.line().x(d=>xS(d.epoch)).y(d=>yS(d.train)).curve(d3.curveCatmullRom);
+    const lineGen2=d3.line().x(d=>xS(d.epoch)).y(d=>yS(d.val)).curve(d3.curveCatmullRom);
+    g.append('path').datum(sub).attr('d',lineGen).attr('fill','none')
+      .attr('stroke','var(--blue)').attr('stroke-width',2);
+    g.append('path').datum(sub).attr('d',lineGen2).attr('fill','none')
+      .attr('stroke','var(--green)').attr('stroke-width',2).attr('stroke-dasharray','5,3');
+    // crosshair
+    const d=sftData[epoch];
+    g.append('circle').attr('cx',xS(d.epoch)).attr('cy',yS(d.train)).attr('r',4)
+      .attr('fill','var(--blue)').attr('stroke','.5px solid #0a0e1a');
+    g.append('circle').attr('cx',xS(d.epoch)).attr('cy',yS(d.val)).attr('r',4)
+      .attr('fill','var(--green)');
+  }
+
+  function scrub(epoch){
+    document.getElementById('epoch-val').textContent=epoch;
+    renderLoss(epoch);
+  }
+
+  function init(){
+    sftData=generateSFTCurve();
+    renderTF();
+    renderLoss(39);
+    document.getElementById('tf-prev').addEventListener('click',()=>{
+      tfStep=Math.max(0,tfStep-1);renderTF();
+    });
+    document.getElementById('tf-next').addEventListener('click',()=>{
+      tfStep=Math.min(inputTokens.length-1,tfStep+1);renderTF();
+    });
+    ScrollModule.register('s3',()=>{});
+  }
+  return{init,scrub};
+})();
+
+// ════════════════════════════════════════════════════════
+//  S4: GRPO MODULE
+// ════════════════════════════════════════════════════════
+const GRPOModule=(()=>{
+  const baseRewards=[3.2,-0.3,3.0,1.5];
+  const rolloutOutputs=['"ca<EOS>"','"cba<EOS>"','"c a<EOS>"','"c<EOS>"'];
+  const rolloutDescs=[
+    'Correct: reversed "abc" → "ca", skipped b',
+    'Missed: kept "b" in output — penalty applied',
+    'Correct: same result as rollout 1 with slight variation',
+    'Incomplete: stopped early, missing "a"'
+  ];
+  let rewards=[...baseRewards];
+
+  function resample(){
+    rewards=baseRewards.map(r=>+(r+(Math.random()-.5)*0.8).toFixed(2));
+    render();
+  }
+  function render(){
+    const svgEl=document.getElementById('grpo-tree');
+    const W=svgEl.getBoundingClientRect().width||400;
+    const H=260;svgEl.setAttribute('height',H);
+    const svg=d3.select('#grpo-tree');svg.selectAll('*').remove();
+    const advantages=normalizeAdvantages(rewards);
+    const colorS=d3.scaleDiverging(d3.interpolateRdYlGn).domain([-2,0,2]);
+    const margin=16;
+    const rootX=margin+50,rootY=H/2;
+    const leafX=W-margin-80;
+    const leafYs=[H*.12,H*.37,H*.63,H*.88];
+    // links
+    leafYs.forEach((ly,i)=>{
+      const path=svg.append('path')
+        .attr('d',`M${rootX},${rootY} C${(rootX+leafX)/2},${rootY} ${(rootX+leafX)/2},${ly} ${leafX},${ly}`)
+        .attr('fill','none').attr('stroke','#1e293b').attr('stroke-width',1.5);
+      const len=path.node().getTotalLength();
+      path.attr('stroke-dasharray',len).attr('stroke-dashoffset',len)
+        .transition().delay(i*150).duration(500).attr('stroke-dashoffset',0);
+    });
+    // root node
+    const rg=svg.append('g').attr('transform',`translate(${rootX},${rootY})`);
+    rg.append('circle').attr('r',32).attr('fill','var(--card)').attr('stroke','var(--blue)').attr('stroke-width',1.5);
+    rg.append('text').attr('text-anchor','middle').attr('y',-6).attr('font-size',9).attr('fill','#64748b').text('Prompt');
+    rg.append('text').attr('text-anchor','middle').attr('y',5).attr('font-size',8).attr('fill','var(--blue)').text('<BOS>abc<SEP>');
+    // leaf nodes
+    leafYs.forEach((ly,i)=>{
+      const adv=advantages[i];
+      const lg=svg.append('g').attr('transform',`translate(${leafX},${ly})`).style('opacity',0);
+      lg.transition().delay(i*150+400).duration(300).style('opacity',1);
+      lg.append('rect').attr('x',-60).attr('y',-28).attr('width',120).attr('height',56).attr('rx',8)
+        .attr('fill',`${colorS(adv)}22`).attr('stroke',colorS(adv)).attr('stroke-width',1.5);
+      lg.append('text').attr('text-anchor','middle').attr('y',-12).attr('font-size',9).attr('fill','#94a3b8')
+        .text(`Rollout ${i+1}`);
+      lg.append('text').attr('text-anchor','middle').attr('y',2).attr('font-size',10).attr('font-weight','600')
+        .attr('fill',colorS(adv)).text(rolloutOutputs[i]);
+      lg.append('text').attr('text-anchor','middle').attr('y',16).attr('font-size',9)
+        .attr('fill',rewards[i]>=0?'var(--green)':'var(--red)').text(`r=${rewards[i].toFixed(2)}`);
+      lg.append('text').attr('text-anchor','middle').attr('y',28).attr('font-size',9)
+        .attr('fill','#64748b').text(`A=${adv.toFixed(2)}`);
+      lg.on('mouseenter',e=>showTooltip(e,`<strong>Rollout ${i+1}</strong><br>${rolloutDescs[i]}<br>reward: <strong>${rewards[i]}</strong><br>advantage: <strong>${adv.toFixed(3)}</strong>`));
+      lg.on('mouseleave',hideTooltip);
+    });
+    renderAdvBar(rewards,advantages);
+  }
+  function renderAdvBar(rews,advs){
+    const svgEl=document.getElementById('adv-svg');
+    const W=svgEl.getBoundingClientRect().width||300;
+    const H=110;svgEl.setAttribute('height',H);
+    const svg=d3.select('#adv-svg');svg.selectAll('*').remove();
+    const g=svg.append('g').attr('transform','translate(10,10)');
+    const iW=W-20,iH=90;
+    const n=4;const bw=(iW/n*.4);
+    const maxR=Math.max(...rews.map(Math.abs),0.1);
+    const maxA=Math.max(...advs.map(Math.abs),0.1);
+    rews.forEach((r,i)=>{
+      const x=i*(iW/n);const barH=(Math.abs(r)/maxR)*(iH/2-10);
+      const y=r>=0?iH/2-barH:iH/2;
+      g.append('rect').attr('x',x+iW/n*.1).attr('y',y).attr('width',bw).attr('height',barH)
+        .attr('fill',r>=0?'rgba(52,211,153,.6)':'rgba(248,113,113,.6)').attr('rx',2);
+      g.append('text').attr('x',x+iW/n*.1+bw/2).attr('y',y+(r>=0?-3:barH+10))
+        .attr('text-anchor','middle').attr('font-size',8).attr('fill','#94a3b8').text(r.toFixed(1));
+    });
+    advs.forEach((a,i)=>{
+      const x=i*(iW/n)+iW/2/n;
+      const barH=(Math.abs(a)/maxA)*(iH/2-10);
+      const y=a>=0?iH/2-barH:iH/2;
+      g.append('rect').attr('x',x+iW/n*.1).attr('y',y).attr('width',bw).attr('height',barH)
+        .attr('fill',a>=0?'rgba(96,165,250,.6)':'rgba(248,113,113,.4)').attr('rx',2)
+        .attr('stroke-dasharray','2,2').attr('stroke',a>=0?'var(--blue)':'var(--red)').attr('stroke-width',1);
+    });
+    g.append('line').attr('x1',0).attr('x2',iW).attr('y1',iH/2).attr('y2',iH/2)
+      .attr('stroke','#374151').attr('stroke-width',1);
+    g.append('text').attr('x',2).attr('y',8).attr('font-size',8).attr('fill','#64748b').text('raw rewards (solid) vs advantages (dashed)');
+  }
+  function init(){
+    render();
+    document.getElementById('resample-btn').addEventListener('click',resample);
+    ScrollModule.register('s4',()=>{});
+  }
+  return{init,resample};
+})();
+
+// ════════════════════════════════════════════════════════
+//  S5: REWARD MODULE
+// ════════════════════════════════════════════════════════
+const RewardModule=(()=>{
+  function computeReward(source,pred){
+    const reversed=[...source].reverse().join('');
+    const rlTarget=[...reversed].filter(c=>c!=='b').join('');
+    const components=[];
+    // exact match
+    const exact=pred===rlTarget?5.0:0.0;
+    components.push({name:'exact_match',value:exact,color:'var(--green)',formula:`pred=="${rlTarget}" → +5.0`});
+    // positional
+    let pos=0;
+    for(let i=0;i<Math.min(pred.length,rlTarget.length);i++)
+      if(pred[i]===rlTarget[i])pos+=0.2;
+    const posVal=rlTarget.length>0?+(pos/Math.max(rlTarget.length,1)*pred.length*0).toFixed(3):0;
+    // actually: +0.2 per match (not normalized per the code) wait re-read:
+    // reward += 0.2 * positional_matches / max(len(target), 1)
+    const posMatches=Array.from({length:Math.min(pred.length,rlTarget.length)})
+      .filter((_,i)=>pred[i]===rlTarget[i]).length;
+    const positional=+(0.2*posMatches/Math.max(rlTarget.length,1)).toFixed(3);
+    components.push({name:'positional',value:positional,color:'#38bdf8',formula:`+0.2 × ${posMatches}/${rlTarget.length||1}`});
+    // coverage
+    const predCounts={},tgtCounts={};
+    [...pred].forEach(c=>{if(c!=='<EOS>')predCounts[c]=(predCounts[c]||0)+1});
+    [...rlTarget].forEach(c=>{if(c!=='<EOS>')tgtCounts[c]=(tgtCounts[c]||0)+1});
+    let coverage=0;
+    Object.keys(tgtCounts).forEach(c=>coverage+=Math.min(predCounts[c]||0,tgtCounts[c]));
+    const cov=+(0.1*coverage/Math.max(rlTarget.length-1,1)).toFixed(3);
+    components.push({name:'coverage',value:cov,color:'var(--purple)',formula:`+0.1 × ${coverage}/${Math.max(rlTarget.length-1,1)}`});
+    // b penalty
+    const bCount=(pred.match(/b/g)||[]).length;
+    const bPen=+(-1.0*bCount).toFixed(1);
+    components.push({name:'b_penalty',value:bPen,color:'var(--red)',formula:`−1.0 × ${bCount} 'b's`});
+    // length
+    const lenPen=+(-0.1*Math.abs(pred.length-rlTarget.length)).toFixed(2);
+    components.push({name:'length_mismatch',value:lenPen,color:'var(--orange)',formula:`−0.1 × |${pred.length}−${rlTarget.length}|`});
+    // no eos (simplified: check if pred ends with EOS char — here text input so we check if they typed <EOS>)
+    const noEos=pred.includes('<EOS>')?0:-0.5;
+    components.push({name:'no_eos',value:noEos,color:'#fb923c',formula:noEos<0?'no <EOS> token → −0.5':'<EOS> present → 0'});
+    const total=+(components.reduce((s,c)=>s+c.value,0)).toFixed(3);
+    return{components,total,rlTarget};
+  }
+
+  function renderBar(components){
+    const svgEl=document.getElementById('reward-svg');
+    const W=svgEl.getBoundingClientRect().width||300;
+    const margin={top:30,right:80,bottom:40,left:20};
+    const H=320;svgEl.setAttribute('height',H);
+    const svg=d3.select('#reward-svg');svg.selectAll('*').remove();
+    const g=svg.append('g').attr('transform',`translate(${margin.left},${margin.top})`);
+    const iW=W-margin.left-margin.right;const iH=H-margin.top-margin.bottom;
+    let posY=0,negY=0;
+    const bars=components.map(c=>{
+      if(c.value>=0){const b={y0:posY,y1:posY+c.value,...c};posY+=c.value;return b;}
+      else{const b={y0:negY+c.value,y1:negY,...c};negY+=c.value;return b;}
+    });
+    const allVals=[...bars.map(b=>b.y0),...bars.map(b=>b.y1)];
+    const maxV=Math.max(...allVals.map(Math.abs),0.5);
+    const yS=d3.scaleLinear([-maxV,maxV],[iH,0]);
+    const zero=yS(0);
+    // zero line
+    g.append('line').attr('x1',0).attr('x2',iW).attr('y1',zero).attr('y2',zero)
+      .attr('stroke','#374151').attr('stroke-width',1.5);
+    g.append('text').attr('x',-4).attr('y',zero).attr('text-anchor','end')
+      .attr('dominant-baseline','middle').attr('font-size',9).attr('fill','#64748b').text('0');
+    const barW=Math.min(iW-10,60);const barX=(iW-barW)/2;
+    bars.forEach(b=>{
+      const y1=yS(b.y1),y0=yS(b.y0);
+      const barH=Math.max(Math.abs(y0-y1),2);
+      const bY=Math.min(y0,y1);
+      const rect=g.append('rect').attr('x',barX).attr('y',bY).attr('width',barW).attr('height',barH)
+        .attr('fill',b.color+'33').attr('stroke',b.color).attr('stroke-width',1.5).attr('rx',3)
+        .attr('class','reward-bar').style('cursor','pointer');
+      const label=g.append('text').attr('x',barX+barW+6).attr('y',bY+barH/2)
+        .attr('dominant-baseline','middle').attr('font-size',9).attr('fill',b.color)
+        .text(`${b.name} (${b.value>=0?'+':''}${b.value.toFixed(2)})`);
+      rect.on('mouseenter',e=>showTooltip(e,`<strong>${b.name}</strong><br>${b.formula}<br>value: ${b.value>=0?'+':''}${b.value.toFixed(3)}`));
+      rect.on('mouseleave',hideTooltip);
+    });
+    // y axis ticks
+    yS.ticks(6).forEach(t=>{
+      g.append('text').attr('x',barX-6).attr('y',yS(t)).attr('text-anchor','end')
+        .attr('dominant-baseline','middle').attr('font-size',8).attr('fill','#64748b').text(t.toFixed(1));
+    });
+  }
+
+  function renderComponentList(components,total){
+    const el=document.getElementById('reward-components-list');
+    el.innerHTML='';
+    components.forEach(c=>{
+      const row=document.createElement('div');
+      row.style.cssText='display:flex;justify-content:space-between;font-size:.74rem;padding:3px 0;border-bottom:1px solid var(--border)';
+      row.innerHTML=`<span style="color:#94a3b8">${c.name}</span><span style="color:${c.color};font-family:'Fira Code',monospace">${c.value>=0?'+':''}${c.value.toFixed(3)}</span>`;
+      el.appendChild(row);
+    });
+    const tot=document.getElementById('reward-total');
+    tot.textContent=(total>=0?'+':'')+total.toFixed(3);
+    tot.style.color=total>=0?'var(--green)':'var(--red)';
+  }
+
+  function update(){
+    const source=document.getElementById('reward-source').value||'a';
+    const pred=document.getElementById('reward-pred').value||'';
+    const{components,total,rlTarget}=computeReward(source,pred);
+    document.getElementById('reward-target-display').textContent=rlTarget||'(empty)';
+    renderBar(components);
+    renderComponentList(components,total);
+  }
+  function setExample(source,pred){
+    document.getElementById('reward-source').value=source;
+    document.getElementById('reward-pred').value=pred;
+    update();
+  }
+  function init(){
+    update();
+    document.getElementById('reward-source').addEventListener('input',update);
+    document.getElementById('reward-pred').addEventListener('input',update);
+    ScrollModule.register('s5',()=>{});
+  }
+  return{init,setExample};
+})();
+
+// ════════════════════════════════════════════════════════
+//  S6: KL MODULE
+// ════════════════════════════════════════════════════════
+const KLModule=(()=>{
+  let klCoef=0.2;
+  function gaussian(mu,sigma,n=30){
+    return Array.from({length:n},(_,i)=>{
+      const x=i/n*30;
+      return Math.exp(-0.5*((x-mu)/sigma)**2)/(sigma*Math.sqrt(2*Math.PI));
+    });
+  }
+  function normalize(arr){const s=arr.reduce((a,b)=>a+b,0);return arr.map(v=>v/s)}
+  function klDiv(P,Q){return P.reduce((s,p,i)=>p>1e-10?s+p*Math.log(p/(Q[i]+1e-10)):s,0)}
+
+  function render(drift){
+    const svgEl=document.getElementById('kl-svg');
+    const W=svgEl.getBoundingClientRect().width||400;
+    const margin={top:16,right:16,bottom:30,left:40};
+    const H=200;svgEl.setAttribute('height',H);
+    const svg=d3.select('#kl-svg');svg.selectAll('*').remove();
+    const g=svg.append('g').attr('transform',`translate(${margin.left},${margin.top})`);
+    const iW=W-margin.left-margin.right,iH=H-margin.top-margin.bottom;
+    const refMu=10,refSigma=3;
+    const polMu=refMu+drift*.35;
+    const refRaw=gaussian(refMu,refSigma);
+    const polRaw=gaussian(polMu,refSigma*(1+drift*.01));
+    const ref=normalize(refRaw);const pol=normalize(polRaw);
+    const kl=klDiv(pol,ref);
+    const xS=d3.scaleLinear([0,30],[0,iW]);
+    const yS=d3.scaleLinear([0,Math.max(...ref,...pol)*1.1],[iH,0]);
+    const area=d3.area().x((_,i)=>xS(i)).y0(iH).y1(v=>yS(v));
+    const line=d3.line().x((_,i)=>xS(i)).y(v=>yS(v)).curve(d3.curveCatmullRom);
+    // KL difference fill
+    const diff=pol.map((p,i)=>Math.max(0,p-ref[i]));
+    g.append('path').datum(diff).attr('d',area).attr('fill','rgba(248,113,113,.25)');
+    // ref dist
+    g.append('path').datum(ref).attr('d',line).attr('fill','none')
+      .attr('stroke','var(--purple)').attr('stroke-width',2.5).attr('opacity',.8);
+    // pol dist
+    g.append('path').datum(pol).attr('d',line).attr('fill','none')
+      .attr('stroke','var(--blue)').attr('stroke-width',2.5);
+    g.append('g').attr('transform',`translate(0,${iH})`).call(d3.axisBottom(xS).ticks(6).tickSize(3))
+      .selectAll('text').attr('fill','#64748b').attr('font-size',9);
+    g.append('g').call(d3.axisLeft(yS).ticks(4).tickSize(3))
+      .selectAll('text').attr('fill','#64748b').attr('font-size',9);
+    g.selectAll('.domain,.tick line').attr('stroke','#1e293b');
+    g.append('text').attr('x',iW/2).attr('y',iH+24).attr('text-anchor','middle')
+      .attr('font-size',9).attr('fill','#64748b').text('Vocab token index');
+    // update displays
+    document.getElementById('kl-display').textContent=kl.toFixed(4);
+    document.getElementById('kl-drift-val').textContent=drift+'%';
+    document.getElementById('kl-loss-val').textContent=kl.toFixed(4);
+    document.getElementById('kl-total-val').textContent=(klCoef*kl).toFixed(4);
+    document.getElementById('kl-coef-val').textContent=klCoef.toFixed(2);
+  }
+  function update(drift){render(drift)}
+  function updateCoef(c){klCoef=c;render(+document.getElementById('kl-slider').value)}
+  function init(){
+    render(10);
+    ScrollModule.register('s6',()=>render(10));
+  }
+  return{init,update,updateCoef};
+})();
+
+// ════════════════════════════════════════════════════════
+//  S7: ENTROPY MODULE
+// ════════════════════════════════════════════════════════
+const EntropyModule=(()=>{
+  let entCoef=0.005;
+  const peaked=[0.78,0.09,0.05,0.03,0.02,0.01,0.01,0.005,0.004,0.001];
+  const flat=[0.15,0.13,0.12,0.11,0.10,0.10,0.09,0.08,0.07,0.05];
+  let customDist=[0.18,0.13,0.12,0.11,0.10,0.09,0.09,0.08,0.07,0.03];
+
+  function renderBars(svgId,dist,hValId){
+    const svgEl=document.getElementById(svgId);
+    const W=svgEl.getBoundingClientRect().width||200;
+    const margin={top:10,right:10,bottom:20,left:20};
+    const H=120;svgEl.setAttribute('height',H);
+    const svg=d3.select('#'+svgId);svg.selectAll('*').remove();
+    const g=svg.append('g').attr('transform',`translate(${margin.left},${margin.top})`);
+    const iW=W-margin.left-margin.right,iH=H-margin.top-margin.bottom;
+    const xS=d3.scaleBand([...Array(dist.length).keys()],[0,iW]).padding(.15);
+    const yS=d3.scaleLinear([0,Math.max(...dist)*1.1],[iH,0]);
+    dist.forEach((p,i)=>{
+      g.append('rect').attr('x',xS(i)).attr('y',yS(p)).attr('width',xS.bandwidth())
+        .attr('height',iH-yS(p)).attr('fill','rgba(96,165,250,.6)').attr('rx',2)
+        .on('mouseenter',e=>showTooltip(e,`p=${p.toFixed(3)}<br>p×log(p)=${(p*Math.log(p+1e-10)).toFixed(4)}`))
+        .on('mouseleave',hideTooltip);
+    });
+    g.append('g').attr('transform',`translate(0,${iH})`).call(d3.axisBottom(xS).tickSize(2))
+      .selectAll('text').attr('font-size',8).attr('fill','#64748b');
+    g.selectAll('.domain,.tick line').attr('stroke','#1e293b');
+    const H_val=entropy(dist);
+    document.getElementById(hValId).textContent=H_val.toFixed(3);
+  }
+  function renderCustom(){
+    const svgEl=document.getElementById('ent-custom-svg');
+    const W=svgEl.getBoundingClientRect().width||200;
+    const margin={top:10,right:10,bottom:20,left:20};
+    const H=130;svgEl.setAttribute('height',H);
+    const svg=d3.select('#ent-custom-svg');svg.selectAll('*').remove();
+    const g=svg.append('g').attr('transform',`translate(${margin.left},${margin.top})`);
+    const iW=W-margin.left-margin.right,iH=H-margin.top-margin.bottom;
+    const n=customDist.length;
+    const xS=d3.scaleBand([...Array(n).keys()],[0,iW]).padding(.15);
+    const yS=d3.scaleLinear([0,1],[iH,0]);
+    const drag=d3.drag().on('drag',function(event,i){
+      const newP=Math.max(0.001,Math.min(0.99,yS.invert(event.y-margin.top)));
+      customDist[i]=newP;
+      const s=customDist.reduce((a,b)=>a+b,0);
+      customDist=customDist.map(v=>v/s);
+      updateCustom();
+    });
+    customDist.forEach((p,i)=>{
+      g.append('rect').datum(i).attr('x',xS(i)).attr('y',yS(p)).attr('width',xS.bandwidth())
+        .attr('height',iH-yS(p)).attr('fill','rgba(167,139,250,.7)').attr('rx',2)
+        .attr('cursor','ns-resize').call(drag);
+    });
+    g.append('g').attr('transform',`translate(0,${iH})`).call(d3.axisBottom(xS).tickSize(2))
+      .selectAll('text').attr('font-size',8).attr('fill','#64748b');
+    g.selectAll('.domain,.tick line').attr('stroke','#1e293b');
+    const H_val=entropy(customDist);
+    document.getElementById('h-custom').textContent=H_val.toFixed(3);
+    document.getElementById('ent-bonus-val').textContent=(-entCoef*H_val).toFixed(4);
+  }
+  function updateCustom(){renderCustom()}
+  function updateCoef(c){
+    entCoef=c;document.getElementById('ent-coef-val').textContent=c.toFixed(3);
+    const H_val=entropy(customDist);
+    document.getElementById('ent-bonus-val').textContent=(-entCoef*H_val).toFixed(4);
+  }
+  function init(){
+    renderBars('ent-peaked-svg',peaked,'h-peaked');
+    renderBars('ent-flat-svg',flat,'h-flat');
+    renderCustom();
+    ScrollModule.register('s7',()=>{
+      document.getElementById('ent-formula').classList.add('typing');
+    });
+  }
+  return{init,updateCoef};
+})();
+
+// ════════════════════════════════════════════════════════
+//  S8: CURRICULUM MODULE
+// ════════════════════════════════════════════════════════
+const CurriculumModule=(()=>{
+  let currentStep=0;let playing=false;let playTimer=null;
+  const TOTAL_STEPS=15000;const CURR_STEPS=3000;
+  const examples=[
+    {input:['a','b','c'],target:['c','a']},
+    {input:['d','a','b','c'],target:['c','a','d']},
+    {input:['x','b','y','z','a'],target:['a','z','y','x']},
+    {input:['h','e','l','b','l','o'],target:['o','l','l','e','h']},
+  ];
+  const phases=[
+    {start:0,end:3000,maxLen:3,color:'var(--yellow)'},
+    {start:3001,end:6000,maxLen:4,color:'var(--orange)'},
+    {start:6001,end:9000,maxLen:5,color:'#86efac'},
+    {start:9001,end:15000,maxLen:6,color:'var(--green)'},
+  ];
+  function curMaxLen(step){
+    return Math.min(3+Math.floor(Math.max(0,step-1)/CURR_STEPS),6);
+  }
+  function phaseIndex(step){
+    return phases.findIndex(p=>step<=p.end);
+  }
+  function renderExample(step){
+    const pi=Math.max(0,phaseIndex(step));
+    const ex=examples[Math.min(pi,examples.length-1)];
+    const inp=document.getElementById('cur-example-input');
+    const tgt=document.getElementById('cur-example-target');
+    inp.innerHTML='';tgt.innerHTML='';
+    [['<BOS>'],...ex.input,['<SEP>']].flat().forEach((t,i)=>{
+      const el=document.createElement('div');
+      el.className='token '+(t==='<BOS>'||t==='<SEP>'?'tok-special':'tok-input');
+      el.style.animationDelay=(i*60)+'ms';el.innerHTML=`<span>${t}</span>`;
+      inp.appendChild(el);
+    });
+    [...ex.target,['<EOS>']].flat().forEach((t,i)=>{
+      const el=document.createElement('div');
+      el.className='token '+(t==='<EOS>'?'tok-special':'tok-output');
+      el.style.animationDelay=(i*60)+'ms';el.innerHTML=`<span>${t}</span>`;
+      tgt.appendChild(el);
+    });
+    document.getElementById('cur-step-display').textContent=step.toLocaleString();
+    document.getElementById('cur-maxlen-display').textContent=curMaxLen(step);
+  }
+  function renderTimeline(){
+    const svgEl=document.getElementById('curriculum-svg');
+    const W=svgEl.getBoundingClientRect().width||600;
+    const margin={top:40,right:20,bottom:20,left:50};
+    const H=90;svgEl.setAttribute('height',H);
+    const svg=d3.select('#curriculum-svg');svg.selectAll('*').remove();
+    const g=svg.append('g').attr('transform',`translate(${margin.left},${margin.top})`);
+    const iW=W-margin.left-margin.right;const iH=H-margin.top-margin.bottom;
+    const xS=d3.scaleLinear([0,TOTAL_STEPS],[0,iW]);
+    // Phase bars
+    phases.forEach(p=>{
+      g.append('rect').attr('x',xS(p.start)).attr('y',0)
+        .attr('width',xS(p.end)-xS(p.start)).attr('height',iH)
+        .attr('fill',p.color+'22').attr('stroke',p.color+'66').attr('stroke-width',.5);
+      g.append('text').attr('x',xS((p.start+p.end)/2)).attr('y',iH/2-4)
+        .attr('text-anchor','middle').attr('font-size',10).attr('fill',p.color).attr('font-weight','600')
+        .text(`len≤${p.maxLen}`);
+      g.append('text').attr('x',xS((p.start+p.end)/2)).attr('y',iH/2+10)
+        .attr('text-anchor','middle').attr('font-size',8).attr('fill','#64748b')
+        .text(`${p.start.toLocaleString()}–${p.end.toLocaleString()}`);
+    });
+    // Axis
+    g.append('g').attr('transform',`translate(0,${iH})`).call(d3.axisBottom(xS).ticks(6).tickFormat(d=>d===0?'0':d/1000+'k').tickSize(3))
+      .selectAll('text').attr('fill','#64748b').attr('font-size',9);
+    g.selectAll('.domain,.tick line').attr('stroke','#1e293b');
+    g.append('text').attr('x',-margin.left+5).attr('y',iH/2).attr('dominant-baseline','middle')
+      .attr('font-size',9).attr('fill','#64748b').text('Phase');
+    // Marker (draggable)
+    const marker=g.append('g').attr('id','cur-marker').attr('transform',`translate(${xS(currentStep)},0)`).style('cursor','ew-resize');
+    marker.append('line').attr('y1',-30).attr('y2',iH).attr('stroke','white').attr('stroke-width',1.5).attr('opacity',.8);
+    marker.append('circle').attr('r',6).attr('cy',-30).attr('fill','white').attr('stroke','var(--blue)').attr('stroke-width',2);
+    marker.append('text').attr('y',-38).attr('text-anchor','middle').attr('font-size',9).attr('fill','white').attr('id','cur-step-marker').text('Step 0');
+    const drag=d3.drag()
+      .on('start',()=>{d3.select('#cur-marker').interrupt('play');playing=false;document.getElementById('cur-play-btn').textContent='▶ Play'})
+      .on('drag',function(event){
+        const x=Math.max(0,Math.min(iW,event.x));
+        d3.select('#cur-marker').attr('transform',`translate(${x},0)`);
+        currentStep=Math.round(xS.invert(x));
+        d3.select('#cur-step-marker').text('Step '+currentStep.toLocaleString());
+        renderExample(currentStep);
+      });
+    marker.call(drag);
+  }
+  function playTimeline(){
+    if(playing){playing=false;document.getElementById('cur-play-btn').textContent='▶ Play';return}
+    playing=true;document.getElementById('cur-play-btn').textContent='⏸ Pause';
+    const svgEl=document.getElementById('curriculum-svg');
+    const W=svgEl.getBoundingClientRect().width||600;
+    const margin={top:40,right:20,bottom:20,left:50};
+    const iW=W-margin.left-margin.right;
+    const xS=d3.scaleLinear([0,TOTAL_STEPS],[0,iW]);
+    let start=currentStep;
+    const dur=8000*(1-start/TOTAL_STEPS);
+    d3.select('#cur-marker').transition('play').duration(dur).ease(d3.easeLinear)
+      .attrTween('transform',()=>{
+        return t=>{
+          currentStep=Math.round(start+(TOTAL_STEPS-start)*t);
+          d3.select('#cur-step-marker').text('Step '+currentStep.toLocaleString());
+          renderExample(currentStep);
+          return `translate(${xS(currentStep)},0)`;
+        };
+      })
+      .on('end',()=>{playing=false;document.getElementById('cur-play-btn').textContent='▶ Play'});
+  }
+  function resetTimeline(){
+    d3.select('#cur-marker').interrupt('play');
+    playing=false;currentStep=0;
+    document.getElementById('cur-play-btn').textContent='▶ Play';
+    const svgEl=document.getElementById('curriculum-svg');
+    const W=svgEl.getBoundingClientRect().width||600;
+    const margin={top:40,right:20,bottom:20,left:50};
+    const iW=W-margin.left-margin.right;
+    const xS=d3.scaleLinear([0,TOTAL_STEPS],[0,iW]);
+    d3.select('#cur-marker').attr('transform',`translate(${xS(0)},0)`);
+    d3.select('#cur-step-marker').text('Step 0');
+    renderExample(0);
+  }
+  function init(){
+    renderTimeline();
+    renderExample(0);
+    document.getElementById('cur-play-btn').addEventListener('click',playTimeline);
+    document.getElementById('cur-reset-btn').addEventListener('click',resetTimeline);
+    ScrollModule.register('s8',()=>{});
+    window.addEventListener('resize',debounce(()=>{renderTimeline();},300));
+  }
+  return{init};
+})();
+
+// ════════════════════════════════════════════════════════
+//  EMBED MODULE  (S1 deep-dive — simplified 8-dim view)
+// ════════════════════════════════════════════════════════
+const EmbedModule=(()=>{
+  const D_MODEL=256;
+  const SHOW_DIMS=8;
+
+  // Deterministic pseudo-embedding via LCG seeded by token_id
+  function seededEmb(tokenId){
+    const vec=new Float32Array(D_MODEL);
+    let s=tokenId*1009+7;
+    for(let i=0;i<D_MODEL;i++){
+      s=(s*1664525+1013904223)>>>0;
+      vec[i]=+( ((s/2147483648)-1)*0.55 ).toFixed(3);
+    }
+    return vec;
+  }
+
+  // Exact sinusoidal PE matching model.py
+  function peVec(pos){
+    const vec=new Float32Array(D_MODEL);
+    for(let i=0;i<D_MODEL;i++){
+      const div=Math.pow(10000,Math.floor(i/2)*2/D_MODEL);
+      vec[i]=+(  (i%2===0?Math.sin(pos/div):Math.cos(pos/div))  ).toFixed(3);
+    }
+    return vec;
+  }
+
+  // Render SHOW_DIMS horizontal bars with numeric labels
+  function renderBars(containerId,vec,color){
+    const container=document.getElementById(containerId);
+    if(!container)return;
+    container.innerHTML='';
+    for(let i=0;i<SHOW_DIMS;i++){
+      const v=vec[i];
+      const row=document.createElement('div');
+      row.className='emb-row';
+
+      const lbl=document.createElement('div');
+      lbl.className='emb-dim-label';
+      lbl.textContent='d'+i;
+      row.appendChild(lbl);
+
+      const track=document.createElement('div');
+      track.className='emb-bar-track';
+      const zero=document.createElement('div');
+      zero.className='emb-bar-zero';
+      track.appendChild(zero);
+
+      const fill=document.createElement('div');
+      fill.className='emb-bar-fill '+(v>=0?'pos':'neg');
+      fill.style.width=Math.min(100,Math.abs(v)/1.2*100).toFixed(1)+'%';
+      fill.style.background=color;
+      fill.style.opacity='0.82';
+      track.appendChild(fill);
+      row.appendChild(track);
+
+      const val=document.createElement('div');
+      val.className='emb-val';
+      val.style.color=v>=0?color:'var(--orange)';
+      val.textContent=(v>=0?'+':'')+v.toFixed(3);
+      row.appendChild(val);
+
+      row.addEventListener('mouseenter',e=>showTooltip(e,
+        `<strong>Dimension ${i}</strong><br>value: <strong>${v.toFixed(4)}</strong><br><span style="color:#94a3b8;font-size:.75em">One of ${D_MODEL} numbers in the vector</span>`));
+      row.addEventListener('mouseleave',hideTooltip);
+      container.appendChild(row);
+    }
+  }
+
+  // Comparison bars: shows emb (blue) + PE (purple stripe) side by side for SHOW_DIMS dims
+  function renderCmpBars(containerId,emb,pe){
+    const container=document.getElementById(containerId);
+    if(!container)return;
+    container.innerHTML='';
+    for(let i=0;i<SHOW_DIMS;i++){
+      const ev=emb[i],pv=pe[i];
+      const row=document.createElement('div');
+      row.className='emb-row';
+
+      const lbl=document.createElement('div');
+      lbl.className='emb-dim-label';
+      lbl.textContent='d'+i;
+      row.appendChild(lbl);
+
+      const track=document.createElement('div');
+      track.className='emb-bar-track';
+      track.style.position='relative';
+
+      const zero=document.createElement('div');zero.className='emb-bar-zero';
+      track.appendChild(zero);
+
+      // embedding bar (blue)
+      const f1=document.createElement('div');
+      f1.className='emb-bar-fill '+(ev>=0?'pos':'neg');
+      f1.style.width=Math.min(100,Math.abs(ev)/1.2*100).toFixed(1)+'%';
+      f1.style.background='var(--blue)';f1.style.opacity='.65';
+      track.appendChild(f1);
+
+      // pe stripe (purple, thinner, overlaid)
+      const f2=document.createElement('div');
+      f2.style.cssText='position:absolute;top:7px;height:6px;background:var(--purple);opacity:.85;border-radius:2px;';
+      const pvPct=Math.min(100,Math.abs(pv)/1.2*100).toFixed(1);
+      if(pv>=0){f2.style.left='50%';f2.style.width=pvPct+'%';}
+      else{f2.style.right='50%';f2.style.width=pvPct+'%';}
+      track.appendChild(f2);
+      row.appendChild(track);
+
+      const val=document.createElement('div');
+      val.className='emb-val';
+      val.style.color='var(--green)';
+      val.textContent=(ev+pv>=0?'+':'')+((ev+pv).toFixed(2));
+      row.appendChild(val);
+
+      row.addEventListener('mouseenter',e=>showTooltip(e,
+        `<strong>d${i}</strong><br><span style="color:var(--blue)">emb = ${ev.toFixed(3)}</span><br><span style="color:var(--purple)">PE  = ${pv.toFixed(3)}</span><br><span style="color:var(--green)">sum = ${(ev+pv).toFixed(3)}</span>`));
+      row.addEventListener('mouseleave',hideTooltip);
+      container.appendChild(row);
+    }
+  }
+
+  // PE wave: dims 0, 2, 16 across positions 0-12
+  function renderPEWave(){
+    const svgEl=document.getElementById('pe-wave-svg');
+    if(!svgEl)return;
+    const W=svgEl.getBoundingClientRect().width||500;
+    const H=130;svgEl.setAttribute('height',H);
+    const margin={top:14,right:120,bottom:30,left:36};
+    const iW=W-margin.left-margin.right,iH=H-margin.top-margin.bottom;
+    const svg=d3.select('#pe-wave-svg');svg.selectAll('*').remove();
+    const g=svg.append('g').attr('transform',`translate(${margin.left},${margin.top})`);
+    const N=13;
+    const xS=d3.scaleLinear([0,N-1],[0,iW]);
+    const yS=d3.scaleLinear([-1.15,1.15],[iH,0]);
+    g.append('line').attr('x1',0).attr('x2',iW).attr('y1',yS(0)).attr('y2',yS(0))
+      .attr('stroke','#374151').attr('stroke-dasharray','3,3');
+    g.append('g').attr('transform',`translate(0,${iH})`)
+      .call(d3.axisBottom(xS).ticks(N-1).tickFormat(d=>'p'+d).tickSize(3))
+      .selectAll('text').attr('fill','#64748b').attr('font-size',8);
+    g.append('g').call(d3.axisLeft(yS).ticks(5).tickSize(3))
+      .selectAll('text').attr('fill','#64748b').attr('font-size',8);
+    g.selectAll('.domain,.tick line').attr('stroke','#1e293b');
+
+    const dims=[
+      {d:0, c:'#60a5fa', label:'dim 0 — fast sin'},
+      {d:2, c:'#a78bfa', label:'dim 2 — medium sin'},
+      {d:16,c:'#34d399', label:'dim 16 — slow sin'},
+    ];
+    const lineGen=d3.line().x((_,i)=>xS(i)).y(v=>yS(v)).curve(d3.curveCatmullRom);
+    dims.forEach(({d,c,label},li)=>{
+      const pts=Array.from({length:N},(_,pos)=>peVec(pos)[d]);
+      g.append('path').datum(pts).attr('d',lineGen)
+        .attr('fill','none').attr('stroke',c).attr('stroke-width',2);
+      pts.forEach((v,pos)=>{
+        g.append('circle').attr('cx',xS(pos)).attr('cy',yS(v)).attr('r',3).attr('fill',c)
+          .on('mouseenter',e=>showTooltip(e,`PE(pos=${pos}, dim=${d}) = <strong>${v.toFixed(4)}</strong>`))
+          .on('mouseleave',hideTooltip);
+      });
+      g.append('circle').attr('cx',iW+8).attr('cy',li*18+8).attr('r',4).attr('fill',c);
+      g.append('text').attr('x',iW+16).attr('y',li*18+8).attr('dominant-baseline','middle')
+        .attr('font-size',8).attr('fill',c).text(label);
+    });
+    g.append('text').attr('x',iW/2).attr('y',iH+22).attr('text-anchor','middle')
+      .attr('font-size',8).attr('fill','#64748b').text('Sequence position');
+  }
+
+  function buildTokens(word){
+    const seq=[...word];
+    const reversed=[...seq].reverse();
+    const items=[
+      {tok:'<BOS>',role:'special'},
+      ...seq.map(c=>({tok:c,role:'input'})),
+      {tok:'<SEP>',role:'special'},
+      ...reversed.map(c=>({tok:c,role:'output'})),
+      {tok:'<EOS>',role:'special'},
+    ];
+    return items.map((t,i)=>({...t,pos:i}));
+  }
+
+  let selectedIdx=1;
+  let currentTokens=[];
+
+  function selectToken(idx){
+    selectedIdx=idx;
+    document.querySelectorAll('.tok-selector-btn').forEach((b,i)=>b.classList.toggle('selected',i===idx));
+    const t=currentTokens[idx];
+    const emb=seededEmb(charId(t.tok));
+    const pe=peVec(t.pos);
+    const sum=new Float32Array(D_MODEL);
+    for(let i=0;i<D_MODEL;i++)sum[i]=emb[i]+pe[i];
+
+    const tokEl=document.getElementById('emb-tok-label');
+    if(tokEl)tokEl.textContent=`row ${charId(t.tok)} of 30  (token "${t.tok}")`;
+    const posEl=document.getElementById('pe-pos-label');
+    if(posEl)posEl.textContent=`position ${t.pos} in sequence`;
+
+    renderBars('emb-bars',emb,'var(--blue)');
+    renderBars('pe-bars',pe,'var(--purple)');
+    renderBars('sum-bars',sum,'var(--green)');
+  }
+
+  function renderInsight(word){
+    const tokens=buildTokens(word);
+    const inputToks=tokens.filter(t=>t.role==='input');
+    let charA='l',posA=3,posB=4;
+    const seen={};let found=false;
+    for(const t of inputToks){
+      if(seen[t.tok]!==undefined&&!found){charA=t.tok;posA=seen[t.tok];posB=t.pos;found=true;break;}
+      seen[t.tok]=t.pos;
+    }
+    if(!found){charA=inputToks[0]?.tok||'h';posA=inputToks[0]?.pos||1;posB=posA;}
+
+    const emb=seededEmb(charId(charA));
+    renderCmpBars('cmp-l3-bars',emb,peVec(posA));
+    renderCmpBars('cmp-l4-bars',emb,peVec(posB));
+
+    const h3=document.querySelector('#cmp-l3-bars')?.previousElementSibling;
+    const h4=document.querySelector('#cmp-l4-bars')?.previousElementSibling;
+    if(h3)h3.innerHTML=`'${charA}' at position ${posA}`;
+    if(h4)h4.innerHTML=`'${charA}' at position ${posB}`;
+
+    const ins=document.querySelector('.insight-box>div:first-child');
+    if(ins){
+      if(found)
+        ins.innerHTML=`⚡ Key Insight — "${word}" has two identical '<strong style="color:var(--blue)">${charA}</strong>' tokens. How does the model tell them apart?`;
+      else
+        ins.innerHTML=`⚡ Key Insight — same token at different positions gets different PE`;
+    }
+  }
+
+  function refresh(word){
+    currentTokens=buildTokens(word||'hello');
+    const sel=document.getElementById('emb-tok-selector');
+    if(!sel)return;
+    sel.innerHTML='';
+    currentTokens.forEach((t,i)=>{
+      const btn=document.createElement('button');
+      btn.className='tok-selector-btn'+(i===selectedIdx?' selected':'');
+      const rc=t.role==='special'?'var(--purple)':t.role==='output'?'var(--green)':'var(--blue)';
+      btn.innerHTML=`<span style="color:${rc};font-size:.82rem">${t.tok}</span><span style="font-size:.6rem;color:var(--muted)">pos ${t.pos}</span>`;
+      btn.addEventListener('click',()=>selectToken(i));
+      sel.appendChild(btn);
+    });
+    if(selectedIdx>=currentTokens.length)selectedIdx=Math.min(1,currentTokens.length-1);
+    selectToken(selectedIdx);
+    renderInsight(word||'hello');
+    renderPEWave();
+  }
+
+  function init(){
+    refresh('hello');
+    const inp=document.getElementById('word-input');
+    if(inp)inp.addEventListener('input',()=>refresh(inp.value||'a'));
+    ScrollModule.register('s1',()=>{});
+  }
+  return{init,refresh};
+})();
+
+// ════════════════════════════════════════════════════════
+//  BOOT
+// ════════════════════════════════════════════════════════
+document.addEventListener('DOMContentLoaded',()=>{
+  NavModule.init();
+  ScrollModule.init();
+  DataPrepModule.init();
+  EmbedModule.init();
+  ArchModule.init();
+  SFTModule.init();
+  GRPOModule.init();
+  RewardModule.init();
+  KLModule.init();
+  EntropyModule.init();
+  CurriculumModule.init();
+  window.addEventListener('resize',debounce(()=>{
+    ArchModule.renderMask(+document.getElementById('mask-size').value);
+  },200));
+});
+</script>
+</body>
+</html>

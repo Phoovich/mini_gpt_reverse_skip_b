@@ -1,0 +1,750 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Token Embeddings & Positional Encoding</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Fira+Code:wght@400;500&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#0a0e1a;--card:#111827;--card2:#0f1629;--border:#1e293b;
+  --blue:#60a5fa;--bd:rgba(96,165,250,.15);
+  --orange:#fb923c;--od:rgba(251,146,60,.15);
+  --green:#34d399;--gd:rgba(52,211,153,.15);
+  --text:#e2e8f0;--muted:#64748b;
+}
+html{scroll-behavior:smooth}
+body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;padding-bottom:80px}
+p{line-height:1.7;color:#94a3b8}
+.mono{font-family:'Fira Code',monospace}
+
+/* Layout */
+.wrap{max-width:920px;margin:0 auto;padding:0 24px}
+.card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:24px}
+.card2{background:var(--card2);border:1px solid var(--border);border-radius:8px;padding:16px}
+.two-col{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.section{margin:28px 0}
+.label{font-size:.68rem;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--muted);margin-bottom:8px}
+.tag{font-size:.68rem;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--blue);margin-bottom:6px}
+.divider{height:1px;background:var(--border);margin:16px 0}
+
+/* Header */
+.header{background:linear-gradient(180deg,#0f1629 0%,var(--bg) 100%);padding:44px 0 32px;text-align:center;border-bottom:1px solid var(--border);margin-bottom:28px}
+.header h1{font-size:1.9rem;font-weight:700;margin-bottom:10px}
+.header h1 span{color:var(--blue)}
+.header p{font-size:.9rem;max-width:520px;margin:0 auto}
+
+/* Token display */
+.hello-row{display:flex;justify-content:center;gap:10px;margin:20px 0 6px}
+.char-box{display:flex;flex-direction:column;align-items:center;gap:5px;cursor:pointer}
+.char-letter{
+  width:54px;height:54px;border-radius:10px;display:flex;align-items:center;justify-content:center;
+  font-size:1.6rem;font-weight:700;border:2px solid var(--border);background:var(--card);transition:all .22s;
+}
+.char-box:hover .char-letter{border-color:var(--blue);background:var(--bd)}
+.char-box.sel .char-letter{border-color:var(--blue);background:rgba(96,165,250,.22);color:var(--blue);box-shadow:0 0 18px rgba(96,165,250,.28)}
+.char-pos{font-size:.62rem;color:var(--muted);font-family:'Fira Code',monospace}
+
+/* Pipeline */
+.pipeline{display:flex;align-items:center;justify-content:center;flex-wrap:wrap;gap:2px;margin:20px 0}
+.pnode{
+  display:flex;flex-direction:column;align-items:center;gap:3px;padding:7px 12px;
+  border-radius:8px;cursor:pointer;transition:all .2s;border:1px solid var(--border);
+  background:var(--card);font-size:.7rem;font-weight:600;min-width:86px;text-align:center;color:var(--muted);
+}
+.pnode:hover{border-color:var(--muted)}
+.pnode.active{border-color:var(--blue);background:rgba(96,165,250,.1);color:var(--blue)}
+.pnode.done{border-color:var(--green);background:rgba(52,211,153,.07);color:var(--green)}
+.pnum{width:18px;height:18px;border-radius:50%;background:var(--border);display:flex;align-items:center;justify-content:center;font-size:.58rem}
+.pnode.active .pnum{background:var(--blue);color:#0a0e1a}
+.pnode.done .pnum{background:var(--green);color:#0a0e1a}
+.parr{color:var(--border);font-size:1rem;padding:0 2px;flex-shrink:0}
+
+/* Controls */
+.controls{display:flex;gap:10px;justify-content:center;align-items:center;margin:12px 0 20px;flex-wrap:wrap}
+.btn{display:inline-flex;align-items:center;gap:6px;padding:9px 20px;border-radius:8px;font-size:.82rem;font-weight:600;cursor:pointer;border:none;font-family:inherit;transition:all .2s}
+.btn-primary{background:var(--blue);color:#0a0e1a}.btn-primary:hover{background:#93c5fd;transform:translateY(-1px)}
+.btn-outline{background:transparent;color:var(--blue);border:1px solid var(--blue)}.btn-outline:hover{background:var(--bd)}
+.btn-ghost{background:transparent;color:var(--muted);border:1px solid var(--border)}.btn-ghost:hover{color:var(--text);border-color:var(--muted)}
+.btn:disabled{opacity:.35;cursor:not-allowed;transform:none!important}
+
+/* Step panels */
+.step-panel{display:none;animation:fadeUp .35s ease}
+.step-panel.active{display:block}
+@keyframes fadeUp{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
+
+/* Vector cells */
+.vec-row{display:flex;gap:4px;flex-wrap:wrap}
+.vc{
+  display:flex;flex-direction:column;align-items:center;gap:2px;
+  min-width:58px;padding:7px 4px;border-radius:6px;border:1px solid transparent;
+  transition:all .28s;cursor:default;
+}
+.vc .vl{font-size:.58rem;color:var(--muted);font-family:'Fira Code',monospace}
+.vc .vv{font-size:.74rem;font-family:'Fira Code',monospace;font-weight:600}
+.vc.blue{background:var(--bd);border-color:rgba(96,165,250,.28)}.vc.blue .vv{color:var(--blue)}
+.vc.orange{background:var(--od);border-color:rgba(251,146,60,.28)}.vc.orange .vv{color:var(--orange)}
+.vc.green{background:var(--gd);border-color:rgba(52,211,153,.28)}.vc.green .vv{color:var(--green)}
+.vc.hl{transform:scale(1.1);z-index:2}
+.vc.blue.hl{box-shadow:0 0 14px rgba(96,165,250,.55)}
+.vc.orange.hl{box-shadow:0 0 14px rgba(251,146,60,.55)}
+.vc.green.hl{box-shadow:0 0 14px rgba(52,211,153,.55)}
+
+/* Tables */
+.mtable{width:100%;border-collapse:collapse;font-size:.7rem;font-family:'Fira Code',monospace}
+.mtable th{padding:6px 8px;color:var(--muted);font-weight:500;border-bottom:1px solid var(--border);text-align:center}
+.mtable td{padding:5px 7px;text-align:center;transition:background .25s,color .25s}
+.mtable td.rlabel{text-align:left;color:var(--muted);padding-right:10px;white-space:nowrap}
+.mtable tr.arow-blue td{background:var(--bd);color:var(--blue)}
+.mtable tr.arow-blue td.rlabel{color:var(--blue)}
+.mtable tr.arow-orange td{background:var(--od);color:var(--orange)}
+.mtable tr.arow-orange td.rlabel{color:var(--orange)}
+
+/* Addition */
+.add-section{display:flex;flex-direction:column;gap:8px}
+.add-row-wrap{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.add-lbl{font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.6px;min-width:72px}
+.add-sep{height:1px;background:var(--border);margin:4px 0 4px 82px}
+
+/* Comparison */
+.cmp-grid{display:grid;grid-template-columns:1fr auto 1fr;gap:16px;align-items:start}
+.cmp-ne{font-size:2.2rem;color:var(--muted);align-self:center;text-align:center}
+
+/* Insight */
+.insight-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px}
+.icard{border-radius:10px;padding:18px;text-align:center}
+.icard .ico{font-size:1.8rem;margin-bottom:8px}
+.icard .itag{font-size:.68rem;font-weight:700;text-transform:uppercase;letter-spacing:.8px;margin-bottom:6px}
+.icard .idesc{font-size:.78rem;color:#94a3b8;line-height:1.6}
+.icard .ieq{font-size:.85rem;font-weight:700;margin-top:10px;font-family:'Fira Code',monospace}
+
+/* Formula */
+.fbox{background:rgba(96,165,250,.06);border:1px solid rgba(96,165,250,.2);border-radius:8px;padding:12px 16px;font-family:'Fira Code',monospace;font-size:.78rem;line-height:2}
+.fbox.o{background:rgba(251,146,60,.06);border-color:rgba(251,146,60,.2)}
+.fbox.g{background:rgba(52,211,153,.06);border-color:rgba(52,211,153,.2)}
+
+/* Tooltip */
+#tt{position:fixed;z-index:999;background:#0f1629;border:1px solid var(--border);border-radius:8px;padding:8px 12px;font-size:.74rem;pointer-events:none;max-width:200px;line-height:1.5;opacity:0;transition:opacity .12s}
+#tt.show{opacity:1}
+
+/* Misc */
+.badge{display:inline-flex;padding:3px 9px;border-radius:4px;font-size:.7rem;font-weight:700}
+.bb{background:var(--bd);color:var(--blue)}.bo{background:var(--od);color:var(--orange)}.bg{background:var(--gd);color:var(--green)}
+.mt8{margin-top:8px}.mt12{margin-top:12px}.mt16{margin-top:16px}.mt20{margin-top:20px}
+.bold{font-weight:700}
+
+@media(max-width:620px){
+  .two-col,.insight-grid,.cmp-grid{grid-template-columns:1fr}
+  .cmp-ne{display:none}
+  .pipeline{gap:3px}
+  .pnode{min-width:64px;font-size:.62rem;padding:6px 8px}
+}
+</style>
+</head>
+<body>
+
+<div id="tt"></div>
+
+<!-- HEADER -->
+<div class="header">
+  <div class="wrap">
+    <div class="tag" style="display:inline-block">Transformer Fundamentals · d_model = 8</div>
+    <h1 style="margin-top:8px">Token Embeddings &amp; <span>Positional Encoding</span></h1>
+    <p>How a Transformer converts "hello" into numbers that encode both <em>what</em> each character is and <em>where</em> it sits in the sequence.</p>
+  </div>
+</div>
+
+<div class="wrap">
+
+<!-- TOKEN SELECTOR -->
+<div class="card" style="margin-bottom:20px">
+  <div class="label">Input: "hello" → 5 character tokens at positions 0–4</div>
+  <div class="hello-row" id="hello-row"></div>
+  <div style="text-align:center;font-size:.72rem;color:var(--muted)">Click any character to explore its embedding and positional encoding</div>
+</div>
+
+<!-- PIPELINE -->
+<div class="pipeline" id="pipeline"></div>
+
+<!-- CONTROLS -->
+<div class="controls">
+  <button class="btn btn-ghost" id="btn-back" onclick="App.back()">← Back</button>
+  <button class="btn btn-primary" id="btn-play" onclick="App.togglePlay()">▶ Play All</button>
+  <button class="btn btn-ghost" id="btn-next" onclick="App.next()">Next →</button>
+</div>
+
+<!-- ═══ STEP PANELS ═══════════════════════════════════════ -->
+
+<!-- STEP 0: Token → ID -->
+<div class="step-panel" id="panel-0">
+  <div class="card">
+    <div class="label">Step 1 — Token to Integer ID</div>
+    <p style="font-size:.82rem;margin:8px 0 18px">Before anything else, each character is mapped to an integer ID. This ID is just a row number — a pointer into the embedding table.</p>
+    <div style="display:flex;align-items:center;gap:20px;flex-wrap:wrap">
+      <div style="text-align:center">
+        <div style="font-size:.68rem;color:var(--muted);margin-bottom:8px">Selected token</div>
+        <div id="p0-char" style="width:64px;height:64px;border-radius:12px;background:var(--bd);border:2px solid var(--blue);display:flex;align-items:center;justify-content:center;font-size:2rem;font-weight:700;color:var(--blue)">h</div>
+        <div style="font-size:.62rem;color:var(--muted);margin-top:6px" id="p0-pos">pos 0</div>
+      </div>
+      <div style="font-size:2rem;color:var(--muted)">→</div>
+      <div style="text-align:center">
+        <div style="font-size:.68rem;color:var(--muted);margin-bottom:8px">Token ID</div>
+        <div id="p0-id" class="mono" style="font-size:2.2rem;font-weight:700;color:var(--blue)">11</div>
+        <div style="font-size:.62rem;color:var(--muted);margin-top:4px">row in embedding table</div>
+      </div>
+      <div style="font-size:2rem;color:var(--muted)">→</div>
+      <div>
+        <div style="font-size:.68rem;color:var(--muted);margin-bottom:8px">All token IDs in "hello"</div>
+        <div id="p0-vocab" style="display:flex;flex-direction:column;gap:5px"></div>
+      </div>
+    </div>
+    <div class="divider"></div>
+    <div class="fbox">
+      <div style="color:var(--muted);font-size:.65rem;margin-bottom:4px">Vocabulary excerpt (a=4, b=5 … z=29)</div>
+      <div>h → <strong style="color:var(--blue)" id="p0-formula-h">11</strong> &nbsp;&nbsp; e → <strong style="color:var(--blue)">8</strong> &nbsp;&nbsp; l → <strong style="color:var(--blue)">15</strong> &nbsp;&nbsp; o → <strong style="color:var(--blue)">18</strong></div>
+    </div>
+  </div>
+</div>
+
+<!-- STEP 1: Embedding Lookup -->
+<div class="step-panel" id="panel-1">
+  <div class="card">
+    <div class="label">Step 2 — Embedding Lookup &nbsp;<span class="badge bb">d_model = 8</span></div>
+    <p style="font-size:.82rem;margin:8px 0 16px">The embedding matrix has one learned row per vocabulary token. We take the row for our token ID. These 8 numbers represent <strong style="color:var(--blue)">what this token means</strong> — learned during training.</p>
+    <div class="label" style="margin-bottom:6px">Embedding matrix (showing 4 tokens)</div>
+    <div style="overflow-x:auto">
+      <table class="mtable" id="emb-table"></table>
+    </div>
+    <div class="mt16">
+      <div class="label">Retrieved embedding vector <span id="emb-lbl" class="badge bb" style="margin-left:6px">row 11</span></div>
+      <div id="emb-vec" class="vec-row mt8"></div>
+    </div>
+    <div class="fbox mt16">
+      <span style="color:var(--muted);font-size:.65rem">Key fact: </span>The same token <strong>"<span id="emb-char">h</span>"</strong> will always retrieve the exact same row. Token identity is fully captured here.
+    </div>
+  </div>
+</div>
+
+<!-- STEP 2: Positional Encoding -->
+<div class="step-panel" id="panel-2">
+  <div class="card">
+    <div class="label">Step 3 — Sinusoidal Positional Encoding &nbsp;<span class="badge bo">position-based</span></div>
+    <p style="font-size:.82rem;margin:8px 0 16px">A fixed, mathematical pattern is added to tell the model <strong style="color:var(--orange)">where this token sits</strong> in the sequence. It's not learned — same position always gives same values.</p>
+    <div class="two-col" style="gap:20px;align-items:start">
+      <div>
+        <div class="label" style="margin-bottom:6px">PE table (5 positions × 8 dims)</div>
+        <div style="overflow-x:auto">
+          <table class="mtable" id="pe-table"></table>
+        </div>
+        <div class="mt12">
+          <div class="label">PE vector for selected position <span id="pe-lbl" class="badge bo" style="margin-left:6px">pos 0</span></div>
+          <div id="pe-vec" class="vec-row mt8"></div>
+        </div>
+      </div>
+      <div>
+        <div class="label" style="margin-bottom:8px">Formula</div>
+        <div class="fbox o" style="line-height:2.2;font-size:.75rem">
+          PE(pos, 2i)&nbsp;&nbsp;&nbsp;= sin(pos / 10000<sup style="font-size:.6em">2i/d</sup>)<br>
+          PE(pos, 2i+1) = cos(pos / 10000<sup style="font-size:.6em">2i/d</sup>)
+        </div>
+        <div class="card2 mt12" style="font-size:.75rem">
+          <div class="label" style="margin-bottom:6px">Example — selected position</div>
+          <div id="pe-example" style="line-height:2;font-family:'Fira Code',monospace;font-size:.72rem"></div>
+        </div>
+        <div class="card2 mt12" style="font-size:.78rem;color:#94a3b8;line-height:1.6">
+          Even dimensions (0,2,4,6) use <strong style="color:var(--orange)">sin</strong> — they start at 0.<br>
+          Odd dimensions (1,3,5,7) use <strong style="color:var(--orange)">cos</strong> — they start at 1.<br>
+          Higher dimensions change more <em>slowly</em> across positions.
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- STEP 3: Addition -->
+<div class="step-panel" id="panel-3">
+  <div class="card">
+    <div class="label">Step 4 — Element-wise Addition</div>
+    <p style="font-size:.82rem;margin:8px 0 16px">Add corresponding values from the embedding and PE vectors. Each of the 8 dimensions combines <strong style="color:var(--blue)">identity</strong> + <strong style="color:var(--orange)">position</strong>.</p>
+    <div class="add-section" id="add-section">
+      <div class="add-row-wrap">
+        <div class="add-lbl" style="color:var(--blue)">Embedding</div>
+        <div id="add-emb" class="vec-row"></div>
+      </div>
+      <div class="add-row-wrap">
+        <div class="add-lbl" style="color:var(--orange)">＋ PE</div>
+        <div id="add-pe" class="vec-row"></div>
+      </div>
+      <div class="add-sep"></div>
+      <div class="add-row-wrap">
+        <div class="add-lbl" style="color:var(--green)">＝ Combined</div>
+        <div id="add-sum" class="vec-row"></div>
+      </div>
+    </div>
+    <div style="display:flex;gap:10px;margin-top:16px;align-items:center;flex-wrap:wrap">
+      <button class="btn btn-outline" style="font-size:.75rem;padding:6px 14px" onclick="App.animateAdd()">▶ Animate addition</button>
+      <span id="add-dim-label" style="font-size:.75rem;color:var(--muted)">Watch each dimension light up in sequence</span>
+    </div>
+  </div>
+</div>
+
+<!-- STEP 4: Final Vector -->
+<div class="step-panel" id="panel-4">
+  <div class="card">
+    <div class="label">Step 5 — Final Vector</div>
+    <p style="font-size:.82rem;margin:8px 0 16px">This 8-dimensional vector is what enters the first Transformer layer. It uniquely represents both the token's identity and its position in the sequence.</p>
+    <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:16px">
+      <div id="p4-badge" style="padding:10px 18px;border-radius:8px;background:var(--gd);border:1px solid rgba(52,211,153,.3);font-size:.9rem;font-weight:700;color:var(--green)"></div>
+      <div style="font-size:.82rem;color:#94a3b8">
+        Token: <span id="p4-tok" class="badge bb"></span> &nbsp;
+        Position: <span id="p4-pos" class="badge bo"></span>
+      </div>
+    </div>
+    <div id="final-vec" class="vec-row"></div>
+    <div class="divider"></div>
+    <div class="two-col" style="gap:14px;font-size:.8rem;color:#94a3b8">
+      <div class="card2">
+        <div style="color:var(--blue);font-weight:600;margin-bottom:5px">Blue portion (embedding)</div>
+        Encodes the semantic meaning of this token. The model learns during training what "h", "e", "l", "o" should mean.
+      </div>
+      <div class="card2">
+        <div style="color:var(--orange);font-weight:600;margin-bottom:5px">Orange portion (PE)</div>
+        Encodes the position. Always fixed by formula — never trained. Without this, the model couldn't tell position 2 from position 3.
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ COMPARISON ══════════════════════════════════════ -->
+<div class="section">
+  <div class="tag">Key Insight</div>
+  <h2 style="font-size:1.25rem;font-weight:700;margin-bottom:8px">Same token, different position → different final vector</h2>
+  <p style="font-size:.84rem;margin-bottom:20px">"hello" contains <strong>'l'</strong> at both position 2 and position 3. Their embeddings are <strong>identical</strong> — but the PE differs, so the combined vectors are <strong>different</strong>. The Transformer can distinguish them.</p>
+
+  <div class="cmp-grid">
+    <div class="card2">
+      <div class="label" style="color:var(--blue);margin-bottom:10px">'l' at position 2</div>
+      <div class="label" style="margin-bottom:5px;font-size:.62rem">Embedding (id=15, same for both)</div>
+      <div id="c-emb-2" class="vec-row"></div>
+      <div style="margin-top:10px" class="label" style="margin-bottom:5px;font-size:.62rem">PE (position 2)</div>
+      <div id="c-pe-2" class="vec-row mt8"></div>
+      <div class="divider"></div>
+      <div class="label" style="margin-bottom:5px;font-size:.62rem">Combined</div>
+      <div id="c-sum-2" class="vec-row mt8"></div>
+    </div>
+    <div class="cmp-ne">≠</div>
+    <div class="card2">
+      <div class="label" style="color:var(--orange);margin-bottom:10px">'l' at position 3</div>
+      <div class="label" style="margin-bottom:5px;font-size:.62rem">Embedding (id=15, same for both)</div>
+      <div id="c-emb-3" class="vec-row"></div>
+      <div style="margin-top:10px" class="label" style="margin-bottom:5px;font-size:.62rem">PE (position 3)</div>
+      <div id="c-pe-3" class="vec-row mt8"></div>
+      <div class="divider"></div>
+      <div class="label" style="margin-bottom:5px;font-size:.62rem">Combined</div>
+      <div id="c-sum-3" class="vec-row mt8"></div>
+    </div>
+  </div>
+
+  <div class="card2 mt16" style="background:rgba(251,191,36,.05);border-color:rgba(251,191,36,.2)">
+    <div style="font-size:.8rem;font-weight:700;color:#fbbf24;margin-bottom:8px">⚡ Dimension-by-dimension difference (combined₃ − combined₂)</div>
+    <div id="diff-row" style="display:flex;gap:5px;flex-wrap:wrap"></div>
+  </div>
+</div>
+
+<!-- ═══ INSIGHT CARDS ═══════════════════════════════════ -->
+<div class="section">
+  <div class="tag">Summary</div>
+  <h2 style="font-size:1.25rem;font-weight:700;margin-bottom:16px">The three-part formula</h2>
+  <div class="insight-grid">
+    <div class="icard" style="background:rgba(96,165,250,.07);border:1px solid rgba(96,165,250,.2)">
+      <div class="ico">🔤</div>
+      <div class="itag" style="color:var(--blue)">Token Embedding</div>
+      <div class="idesc">"What is this token?"<br><br>Learned row of 8 numbers unique to each vocabulary item. Same token always → same embedding.</div>
+      <div class="ieq" style="color:var(--blue)">Emb["l"] = const</div>
+    </div>
+    <div class="icard" style="background:rgba(251,146,60,.07);border:1px solid rgba(251,146,60,.2)">
+      <div class="ico">📍</div>
+      <div class="itag" style="color:var(--orange)">Positional Encoding</div>
+      <div class="idesc">"Where is this token?"<br><br>Fixed sin/cos formula. Never learned. Same position always → same PE values.</div>
+      <div class="ieq" style="color:var(--orange)">PE(pos=2) = const</div>
+    </div>
+    <div class="icard" style="background:rgba(52,211,153,.07);border:1px solid rgba(52,211,153,.2)">
+      <div class="ico">✨</div>
+      <div class="itag" style="color:var(--green)">Combined Vector</div>
+      <div class="idesc">"What AND where?"<br><br>Embedding + PE gives every (token, position) pair a unique fingerprint that feeds into the Transformer.</div>
+      <div class="ieq" style="color:var(--green)">Emb + PE = unique</div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ PE WAVE ═══════════════════════════════════════════ -->
+<div class="section">
+  <div class="tag">Deep Dive</div>
+  <h2 style="font-size:1.25rem;font-weight:700;margin-bottom:8px">How PE values change across positions</h2>
+  <p style="font-size:.84rem;margin-bottom:16px">Different dimensions oscillate at different speeds. Low dimensions change fast (encode fine-grained position); high dimensions change slowly (encode coarse position). Together they make every position unique.</p>
+  <div class="card" style="padding:20px">
+    <svg id="wave-svg" style="width:100%;display:block"></svg>
+    <div id="wave-legend" style="display:flex;gap:14px;flex-wrap:wrap;margin-top:12px;font-size:.72rem"></div>
+  </div>
+</div>
+
+</div><!-- /wrap -->
+
+<script>
+// ═══ DATA ══════════════════════════════════════
+const CHARS  = ['h','e','l','l','o'];
+const POSES  = [0,1,2,3,4];
+const D      = 8;
+
+// Token IDs: a=4..z=29, so h=11, e=8, l=15, o=18
+const CHAR_ID = {h:11, e:8, l:15, o:18};
+
+// Embedding table – fixed, d_model=8, realistic-looking values
+const EMB_TABLE = {
+  11:[ 0.52,-0.31, 0.88,-0.14, 0.67, 0.23,-0.79, 0.45], // h
+   8:[ 0.13, 0.77,-0.52, 0.39,-0.88, 0.64, 0.21,-0.46], // e
+  15:[ 0.74,-0.58, 0.33, 0.91,-0.27,-0.83, 0.56, 0.18], // l
+  18:[-0.41, 0.62, 0.27,-0.73, 0.55, 0.38,-0.84, 0.71], // o
+};
+
+// Sinusoidal PE (exact formula from the paper)
+function pe(pos, dim) {
+  const i = Math.floor(dim / 2);
+  const denom = Math.pow(10000, 2 * i / D);
+  return dim % 2 === 0 ? Math.sin(pos / denom) : Math.cos(pos / denom);
+}
+
+// Pre-compute: PE_MAT[pos][dim]
+const PE_MAT = POSES.map(p => Array.from({length: D}, (_, d) => pe(p, d)));
+
+// Helpers
+const fmt = v => (v >= 0 ? '+' : '') + v.toFixed(3);
+const f4  = v => (v >= 0 ? ' ' : '') + v.toFixed(4);
+const tokId = i => CHAR_ID[CHARS[i]];
+const emb   = i => EMB_TABLE[tokId(i)];
+const peVec = i => PE_MAT[POSES[i]];
+const sum   = i => emb(i).map((v, d) => v + peVec(i)[d]);
+
+// ═══ TOOLTIP ═══════════════════════════════════
+const TT = document.getElementById('tt');
+const showTT = (e, html) => { TT.innerHTML = html; TT.classList.add('show'); moveTT(e); };
+const hideTT = () => TT.classList.remove('show');
+const moveTT = e => {
+  let x = e.clientX + 12, y = e.clientY - 8;
+  if (x + 210 > window.innerWidth) x = e.clientX - 218;
+  TT.style.left = x + 'px'; TT.style.top = y + 'px';
+};
+document.addEventListener('mousemove', e => { if (TT.classList.contains('show')) moveTT(e); });
+
+// ═══ BUILD VEC CELLS ═══════════════════════════
+function makeCell(dim, val, cls, hl = false, extraTip = '') {
+  const c = document.createElement('div');
+  c.className = `vc ${cls}${hl ? ' hl' : ''}`;
+  c.innerHTML = `<span class="vl">d${dim}</span><span class="vv">${fmt(val)}</span>`;
+  const tip = `<strong>dim ${dim}</strong><br>value: ${val.toFixed(5)}${extraTip ? '<br><span style="color:#64748b;font-size:.73em">'+extraTip+'</span>' : ''}`;
+  c.addEventListener('mouseenter', e => showTT(e, tip));
+  c.addEventListener('mouseleave', hideTT);
+  return c;
+}
+
+function fillRow(id, vec, cls, hlDim = -1, tipFn = null) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.innerHTML = '';
+  vec.forEach((v, d) => {
+    const tip = tipFn ? tipFn(d, v) : '';
+    el.appendChild(makeCell(d, v, cls, d === hlDim, tip));
+  });
+}
+
+// ═══ RENDER HELLO ROW ══════════════════════════
+function renderHelloRow() {
+  const el = document.getElementById('hello-row');
+  el.innerHTML = '';
+  CHARS.forEach((ch, i) => {
+    const box = document.createElement('div');
+    box.className = 'char-box' + (i === STATE.sel ? ' sel' : '');
+    box.innerHTML = `<div class="char-letter">${ch}</div><div class="char-pos">pos ${i}</div>`;
+    box.addEventListener('click', () => { STATE.sel = i; render(); });
+    el.appendChild(box);
+  });
+}
+
+// ═══ RENDER PIPELINE ═══════════════════════════
+const STEP_LABELS = ['Token → ID', 'Embedding', 'Pos. Encoding', 'Addition', 'Final Vector'];
+function renderPipeline() {
+  const el = document.getElementById('pipeline');
+  el.innerHTML = '';
+  STEP_LABELS.forEach((lbl, i) => {
+    const wrap = document.createElement('div');
+    wrap.style.display = 'flex'; wrap.style.alignItems = 'center';
+    const node = document.createElement('div');
+    node.className = 'pnode' + (i === STATE.step ? ' active' : i < STATE.step ? ' done' : '');
+    node.innerHTML = `<div class="pnum">${i < STATE.step ? '✓' : i + 1}</div>${lbl}`;
+    node.addEventListener('click', () => { STATE.step = i; render(); });
+    wrap.appendChild(node);
+    if (i < STEP_LABELS.length - 1) {
+      const arr = document.createElement('span');
+      arr.className = 'parr'; arr.textContent = '→';
+      wrap.appendChild(arr);
+    }
+    el.appendChild(wrap);
+  });
+}
+
+// ═══ STEP RENDERERS ════════════════════════════
+
+function renderStep0() {
+  const i = STATE.sel;
+  const ch = CHARS[i], id = tokId(i);
+  document.getElementById('p0-char').textContent = ch;
+  document.getElementById('p0-pos').textContent  = `pos ${i}`;
+  document.getElementById('p0-id').textContent   = id;
+  const vocab = document.getElementById('p0-vocab');
+  vocab.innerHTML = '';
+  // show all 4 unique chars
+  Object.entries(CHAR_ID).forEach(([t, tid]) => {
+    const active = t === ch;
+    const row = document.createElement('div');
+    row.style.cssText = `display:flex;align-items:center;gap:8px;padding:5px 10px;border-radius:6px;font-size:.72rem;font-family:'Fira Code',monospace;border:1px solid ${active?'var(--blue)':'var(--border)'};background:${active?'var(--bd)':'var(--card2)'}`;
+    row.innerHTML = `<span style="color:${active?'var(--blue)':'var(--muted)'}">  "${t}"</span><span style="color:var(--muted)">→</span><span style="color:${active?'var(--blue)':'var(--text)'}">id ${tid}</span>${active?'<span style="margin-left:4px;font-size:.62rem;color:var(--blue)">← selected</span>':''}`;
+    vocab.appendChild(row);
+  });
+}
+
+function renderStep1() {
+  const i = STATE.sel;
+  const ch = CHARS[i], id = tokId(i);
+  // Table
+  const tbl = document.getElementById('emb-table');
+  const rows = [['h',11],['e',8],['l',15],['o',18]];
+  let html = '<thead><tr><th style="text-align:left">Token</th><th>ID</th>';
+  for (let d = 0; d < D; d++) html += `<th>d${d}</th>`;
+  html += '</tr></thead><tbody>';
+  rows.forEach(([t, tid]) => {
+    const act = t === ch;
+    html += `<tr class="${act ? 'arow-blue' : ''}">`;
+    html += `<td class="rlabel">"${t}" ${act ? '← you are here' : ''}</td><td>${tid}</td>`;
+    EMB_TABLE[tid].forEach(v => { html += `<td>${fmt(v)}</td>`; });
+    html += '</tr>';
+  });
+  tbl.innerHTML = html + '</tbody>';
+  // Labels & vec
+  document.getElementById('emb-lbl').textContent = `row ${id}`;
+  document.getElementById('emb-char').textContent = ch;
+  fillRow('emb-vec', EMB_TABLE[id], 'blue', -1, (d, v) => `from embedding table row ${id}`);
+}
+
+function renderStep2() {
+  const i = STATE.sel, pos = POSES[i];
+  const tbl = document.getElementById('pe-table');
+  let html = '<thead><tr><th style="text-align:left">Position</th>';
+  for (let d = 0; d < D; d++) html += `<th>d${d}</th>`;
+  html += '</tr></thead><tbody>';
+  POSES.forEach(p => {
+    const act = p === pos;
+    html += `<tr class="${act ? 'arow-orange' : ''}">`;
+    html += `<td class="rlabel">pos ${p}${act ? ' ← selected' : ''}</td>`;
+    PE_MAT[p].forEach(v => { html += `<td>${v.toFixed(3)}</td>`; });
+    html += '</tr>';
+  });
+  tbl.innerHTML = html + '</tbody>';
+  document.getElementById('pe-lbl').textContent = `pos ${pos}`;
+  fillRow('pe-vec', PE_MAT[pos], 'orange', -1, (d, v) => {
+    const issin = d % 2 === 0;
+    const ii = Math.floor(d / 2);
+    const den = Math.pow(10000, 2*ii/D).toFixed(1);
+    return `${issin?'sin':'cos'}(${pos} / ${den})`;
+  });
+  // Formula examples
+  const ex = document.getElementById('pe-example');
+  const pv = PE_MAT[pos];
+  ex.innerHTML = `
+    <div>d0: <span style="color:var(--orange)">sin</span>(${pos}/1) = <strong style="color:var(--orange)">${pv[0].toFixed(4)}</strong></div>
+    <div>d1: <span style="color:var(--orange)">cos</span>(${pos}/1) = <strong style="color:var(--orange)">${pv[1].toFixed(4)}</strong></div>
+    <div>d2: <span style="color:var(--orange)">sin</span>(${pos}/10) = <strong style="color:var(--orange)">${pv[2].toFixed(4)}</strong></div>
+    <div>d3: <span style="color:var(--orange)">cos</span>(${pos}/10) = <strong style="color:var(--orange)">${pv[3].toFixed(4)}</strong></div>
+    <div style="color:var(--muted);font-size:.65rem;margin-top:4px">d4–d7 use denominator 100 and 1000 → barely change</div>
+  `;
+}
+
+function renderStep3(hlDim = -1) {
+  const i   = STATE.sel;
+  const ev  = emb(i), pv = peVec(i), sv = sum(i);
+  const hlTip = (src) => (d) => src === 'emb' ? `from embedding (row ${tokId(i)})` : src === 'pe' ? `PE(pos=${POSES[i]}, dim=${d})` : `${fmt(ev[d])} + ${fmt(pv[d])}`;
+  fillRow('add-emb', ev, 'blue',   hlDim, hlTip('emb'));
+  fillRow('add-pe',  pv, 'orange', hlDim, hlTip('pe'));
+  fillRow('add-sum', sv, 'green',  hlDim, hlTip('sum'));
+
+  const lbl = document.getElementById('add-dim-label');
+  if (hlDim >= 0) {
+    lbl.style.color = 'var(--green)';
+    lbl.textContent = `dim ${hlDim}: ${fmt(ev[hlDim])} + ${fmt(pv[hlDim])} = ${fmt(sv[hlDim])}`;
+  } else {
+    lbl.style.color = 'var(--muted)';
+    lbl.textContent = 'Watch each dimension light up in sequence';
+  }
+}
+
+function renderStep4() {
+  const i = STATE.sel, ch = CHARS[i], pos = POSES[i];
+  document.getElementById('p4-badge').textContent = `"${ch}" at position ${pos}`;
+  document.getElementById('p4-tok').textContent = `"${ch}" id=${tokId(i)}`;
+  document.getElementById('p4-pos').textContent = `${pos}`;
+  fillRow('final-vec', sum(i), 'green', -1, (d) => `emb[${d}] + PE(${pos},${d})`);
+}
+
+function renderComparison() {
+  const l_emb = EMB_TABLE[15]; // l's embedding is fixed
+  const pe2 = PE_MAT[2], pe3 = PE_MAT[3];
+  const s2 = l_emb.map((v, d) => v + pe2[d]);
+  const s3 = l_emb.map((v, d) => v + pe3[d]);
+
+  fillRow('c-emb-2', l_emb, 'blue');
+  fillRow('c-pe-2',  pe2,   'orange');
+  fillRow('c-sum-2', s2,    'green');
+  fillRow('c-emb-3', l_emb, 'blue');
+  fillRow('c-pe-3',  pe3,   'orange');
+  fillRow('c-sum-3', s3,    'green');
+
+  // Diff
+  const diff = document.getElementById('diff-row');
+  diff.innerHTML = '';
+  s2.forEach((v2, d) => {
+    const delta = +(s3[d] - v2).toFixed(3);
+    const notable = Math.abs(delta) > 0.005;
+    const span = document.createElement('span');
+    span.style.cssText = `padding:3px 8px;border-radius:4px;font-size:.72rem;font-family:'Fira Code',monospace;background:${notable?'rgba(251,191,36,.1)':'rgba(30,41,59,.5)'};border:1px solid ${notable?'rgba(251,191,36,.25)':'var(--border)'}`;
+    span.textContent = `d${d}: ${delta >= 0 ? '+' : ''}${delta}`;
+    span.style.color = notable ? '#fbbf24' : 'var(--muted)';
+    diff.appendChild(span);
+  });
+}
+
+// ═══ PE WAVE CHART ═════════════════════════════
+function renderWave() {
+  const svg = document.getElementById('wave-svg');
+  const W = svg.getBoundingClientRect().width || 700;
+  const H = 170;
+  svg.setAttribute('height', H);
+  const ml=44, mr=160, mt=16, mb=30;
+  const iW = W-ml-mr, iH = H-mt-mb;
+  const xS = p => ml + (p/(POSES.length-1))*iW;
+  const yS = v => mt + iH/2 - v*(iH/2-4);
+
+  let out = '';
+  // Grid
+  out += `<line x1="${ml}" x2="${ml+iW}" y1="${mt+iH/2}" y2="${mt+iH/2}" stroke="#1e293b" stroke-dasharray="3,3" stroke-width="1"/>`;
+  // Y ticks
+  [-1,0,1].forEach(v => {
+    out += `<text x="${ml-6}" y="${yS(v)}" text-anchor="end" dominant-baseline="middle" font-size="9" fill="#64748b" font-family="Inter">${v}</text>`;
+    out += `<line x1="${ml-3}" x2="${ml}" y1="${yS(v)}" y2="${yS(v)}" stroke="#374151"/>`;
+  });
+  // X axis
+  POSES.forEach(p => {
+    out += `<text x="${xS(p)}" y="${mt+iH+18}" text-anchor="middle" font-size="9" fill="#64748b" font-family="Inter">pos ${p}</text>`;
+    out += `<line x1="${xS(p)}" x2="${xS(p)}" y1="${mt+iH}" y2="${mt+iH+4}" stroke="#374151"/>`;
+  });
+
+  const lines = [
+    {d:0, c:'#60a5fa', l:'d0: sin(pos/1) — fast'},
+    {d:1, c:'#c4b5fd', l:'d1: cos(pos/1) — fast'},
+    {d:2, c:'#fb923c', l:'d2: sin(pos/10) — medium'},
+    {d:3, c:'#fcd34d', l:'d3: cos(pos/10) — medium'},
+    {d:4, c:'#34d399', l:'d4: sin(pos/100) — slow'},
+  ];
+  lines.forEach(({d,c,l}) => {
+    const pts = POSES.map(p => ({x:xS(p), y:yS(PE_MAT[p][d])}));
+    const path = pts.map((p,i)=>(i===0?`M${p.x.toFixed(1)},${p.y.toFixed(1)}`:`L${p.x.toFixed(1)},${p.y.toFixed(1)}`)).join(' ');
+    out += `<path d="${path}" fill="none" stroke="${c}" stroke-width="2" stroke-linejoin="round"/>`;
+    pts.forEach(({x,y},i)=>{
+      out += `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="4.5" fill="${c}" opacity=".9"><title>pos ${i}, dim ${d}: ${PE_MAT[i][d].toFixed(4)}</title></circle>`;
+    });
+  });
+
+  svg.innerHTML = out;
+
+  // Legend
+  const leg = document.getElementById('wave-legend');
+  leg.innerHTML = '';
+  lines.forEach(({c,l}) => {
+    leg.innerHTML += `<span style="display:flex;align-items:center;gap:5px"><span style="width:14px;height:3px;background:${c};display:inline-block;border-radius:2px"></span><span style="color:${c}">${l}</span></span>`;
+  });
+}
+
+// ═══ ADDITION ANIMATION ════════════════════════
+let _addTimer = null;
+App.animateAdd = function() {
+  clearInterval(_addTimer);
+  let d = 0;
+  renderStep3(d);
+  _addTimer = setInterval(() => {
+    d++;
+    if (d >= D) { clearInterval(_addTimer); renderStep3(-1); return; }
+    renderStep3(d);
+  }, 420);
+};
+
+// ═══ STATE + APP ═══════════════════════════════
+const STATE = { sel: 0, step: 0, playing: false, playTimer: null };
+
+const STEP_RENDERERS = [renderStep0, renderStep1, renderStep2, renderStep3, renderStep4];
+
+function render() {
+  renderHelloRow();
+  renderPipeline();
+  // Show active panel
+  for (let i = 0; i <= 4; i++)
+    document.getElementById(`panel-${i}`).classList.toggle('active', i === STATE.step);
+  // Render step content
+  STEP_RENDERERS[STATE.step]();
+  // Always update comparison
+  renderComparison();
+  // Button states
+  document.getElementById('btn-back').disabled = STATE.step === 0;
+  document.getElementById('btn-next').disabled = STATE.step === 4;
+  document.getElementById('btn-play').textContent = STATE.playing ? '⏸ Pause' : '▶ Play All';
+}
+
+const App = {
+  animateAdd() {},   // filled above
+  next() {
+    clearInterval(_addTimer);
+    if (STATE.step < 4) { STATE.step++; render(); }
+    else this.stopPlay();
+  },
+  back() {
+    clearInterval(_addTimer);
+    if (STATE.step > 0) { STATE.step--; render(); }
+  },
+  togglePlay() {
+    STATE.playing = !STATE.playing;
+    if (STATE.playing) {
+      if (STATE.step === 4) STATE.step = 0;
+      render();
+      STATE.playTimer = setInterval(() => {
+        if (STATE.step < 4) { STATE.step++; render(); }
+        else this.stopPlay();
+      }, 2600);
+    } else {
+      this.stopPlay();
+    }
+  },
+  stopPlay() {
+    clearInterval(STATE.playTimer);
+    clearInterval(_addTimer);
+    STATE.playing = false;
+    render();
+  }
+};
+
+// ═══ BOOT ══════════════════════════════════════
+document.addEventListener('DOMContentLoaded', () => {
+  render();
+  renderWave();
+  window.addEventListener('resize', renderWave);
+});
+</script>
+</body>
+</html>
